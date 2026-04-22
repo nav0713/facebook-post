@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+    --font-display: "DM Serif Display", Georgia, serif;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: #080806;
+    color: #f0ede6;
+    font-family: var(--font-mono);
+  }
+
+  ::selection {
+    background-color: #c9a84c33;
+    color: #f0ede6;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0a0a08;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #2a2820;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #c9a84c55;
+  }
+}
+
+@layer utilities {
+  .animate-in {
+    animation-fill-mode: both;
+  }
+
+  .fade-in {
+    animation-name: fadeIn;
+    animation-duration: 0.4s;
+    animation-timing-function: ease-out;
+  }
+
+  .slide-in-from-bottom-4 {
+    animation-name: slideInFromBottom;
+    animation-duration: 0.4s;
+    animation-timing-function: ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  @keyframes slideInFromBottom {
+    from { transform: translateY(1rem); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+}
