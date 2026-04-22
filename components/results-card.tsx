@@ -1,6 +1,7 @@
 "use client";
 
 import type { ExtractionResult, ArticleMetadata } from "@/types/extraction";
+import GraphicGenerator from "@/components/graphic-generator";
 
 interface ResultsCardProps {
   data: ExtractionResult;
@@ -102,6 +103,12 @@ export default function ResultsCard({ data, metadata }: ResultsCardProps) {
           </div>
         </Section>
       )}
+
+      {/* Graphic Generator */}
+      <GraphicGenerator
+        imageUrl={metadata.featuredImage}
+        taglishTitle={data.taglishTitle}
+      />
     </div>
   );
 }
