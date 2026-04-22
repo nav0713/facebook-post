@@ -108,6 +108,7 @@ export default function ResultsCard({ data, metadata }: ResultsCardProps) {
       <GraphicGenerator
         imageUrl={metadata.featuredImage}
         taglishTitle={data.taglishTitle}
+        summary={data.summary}
       />
     </div>
   );

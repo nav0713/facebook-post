@@ -28,8 +28,8 @@ export function truncateText(text: string, maxChars: number): string {
  */
 export function cleanArticleText(raw: string): string {
   return raw
-    .replace(/\u200B/g, "") // zero-width space
-    .replace(/\u00A0/g, " ") // non-breaking space → regular space
+    .replace(/​/g, "") // zero-width space
+    .replace(/ /g, " ") // non-breaking space -> regular space
     .replace(/[ \t]+/g, " ") // collapse horizontal whitespace
     .replace(/\n{3,}/g, "\n\n") // collapse 3+ newlines into 2
     .trim();
@@ -48,18 +48,88 @@ export function extractHostname(url: string): string | null {
   }
 }
 
+
+// Replaces U+201C / U+201D (curly double quotes) with ASCII " without using
+// literal Unicode in a regex literal, which trips up some bundler parsers.
+function normalizeQuotes(s: string): string {
+  const L = String.fromCharCode(0x201C);
+  const R = String.fromCharCode(0x201D);
+  return s.split(L).join('"').split(R).join('"');
+}
+
+/**
+ * Escapes literal control characters (U+0000-U+001F) that appear inside
+ * JSON string values. Bare control chars are the most common reason Gemini
+ * output fails JSON.parse (e.g. a literal newline in a summary field).
+ */
+function escapeControlCharsInStrings(s: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (const ch of s) {
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && inString) {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      out += ch;
+      continue;
+    }
+    if (inString) {
+      const code = ch.charCodeAt(0);
+      if (code < 0x20) {
+        if (ch === "\n") out += "\\n";
+        else if (ch === "\r") out += "\\r";
+        else if (ch === "\t") out += "\\t";
+        else out += "\\u" + code.toString(16).padStart(4, "0");
+        continue;
+      }
+    }
+    out += ch;
+  }
+  return out;
+}
+
 /**
  * Safely parses a JSON string. Returns null on failure.
+ * Handles: markdown code fences, Unicode smart quotes, leading/trailing prose,
+ * and literal control characters embedded inside string values.
  */
 export function safeJsonParse<T>(raw: string): T | null {
-  try {
-    // Strip markdown code fences if Gemini wrapped the JSON
-    const cleaned = raw
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim();
-    return JSON.parse(cleaned) as T;
-  } catch {
-    return null;
+  // Strip BOM and markdown code fences
+  let text = raw.replace(/^﻿/, "").trim();
+  if (text.startsWith("```")) {
+    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
   }
+  text = normalizeQuotes(text);
+
+  // Pass 1: direct parse
+  try {
+    return JSON.parse(text) as T;
+  } catch { /* fall through */ }
+
+  // Pass 2: escape bare control characters inside string values
+  try {
+    return JSON.parse(escapeControlCharsInStrings(text)) as T;
+  } catch { /* fall through */ }
+
+  // Pass 3: extract outermost {...} block (handles leading prose from the model)
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    try {
+      return JSON.parse(
+        escapeControlCharsInStrings(text.slice(start, end + 1))
+      ) as T;
+    } catch { /* fall through */ }
+  }
+
+  return null;
 }

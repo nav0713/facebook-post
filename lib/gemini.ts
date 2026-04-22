@@ -1,14 +1,15 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import {
+  GoogleGenerativeAI,
+  HarmCategory,
+  HarmBlockThreshold,
+} from "@google/generative-ai";
 import type { ArticleMetadata } from "@/types/extraction";
 import type { ExtractionResult } from "@/types/extraction";
 import { truncateText, safeJsonParse } from "@/lib/utils";
 
 const MAX_ARTICLE_CHARS = 12_000;
 
-function buildPrompt(
-  articleText: string,
-  metadata: ArticleMetadata
-): string {
+function buildPrompt(articleText: string, metadata: ArticleMetadata): string {
   const truncated = truncateText(articleText, MAX_ARTICLE_CHARS);
 
   return `You are an expert news extraction assistant.
@@ -78,7 +79,10 @@ function validateResult(raw: unknown): ExtractionResult {
     const v = obj[key];
     if (!Array.isArray(v)) return [];
     return v
-      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .filter(
+        (item): item is string =>
+          typeof item === "string" && item.trim().length > 0,
+      )
       .map((item) => item.trim());
   };
 
@@ -101,12 +105,12 @@ function validateResult(raw: unknown): ExtractionResult {
 
 export async function extractWithGemini(
   articleText: string,
-  metadata: ArticleMetadata
+  metadata: ArticleMetadata,
 ): Promise<ExtractionResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "GEMINI_API_KEY is not set. Please add it to your .env.local file."
+      "GEMINI_API_KEY is not set. Please add it to your .env.local file.",
     );
   }
 
@@ -156,7 +160,7 @@ export async function extractWithGemini(
   const parsed = safeJsonParse<unknown>(rawText);
   if (!parsed) {
     throw new Error(
-      `Failed to parse Gemini JSON response. Raw output: ${rawText.slice(0, 300)}`
+      `Failed to parse Gemini JSON response. Raw output: ${rawText.slice(0, 300)}`,
     );
   }
 
