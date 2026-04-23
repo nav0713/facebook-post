@@ -11,6 +11,18 @@ export interface ParsedArticle {
 
 let browserInstance: Browser | null = null;
 
+interface FetchCandidate {
+  url: string;
+  userAgent: string;
+  isMobile?: boolean;
+}
+
+const DESKTOP_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+const MOBILE_USER_AGENT =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+
 async function getBrowser(): Promise<Browser> {
   if (browserInstance) return browserInstance;
 
@@ -30,15 +42,47 @@ async function getBrowser(): Promise<Browser> {
  * Fetches the HTML content of a URL using Puppeteer (handles JavaScript and bot detection).
  */
 async function fetchHtml(url: string): Promise<string> {
+  const candidates = buildFetchCandidates(url);
+  let lastError: Error | null = null;
+
+  for (const candidate of candidates) {
+    try {
+      const html = await fetchHtmlCandidate(candidate);
+      if (!isAccessDeniedHtml(html)) {
+        return html;
+      }
+      lastError = new Error("The site returned an access denied page.");
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  throw new Error(
+    `Failed to fetch article: ${lastError?.message ?? "all fetch attempts failed"}`
+  );
+}
+
+async function fetchHtmlCandidate(candidate: FetchCandidate): Promise<string> {
   let page = null;
 
   try {
     const browser = await getBrowser();
     page = await browser.newPage();
 
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    );
+    await page.setUserAgent(candidate.userAgent);
+    if (candidate.isMobile) {
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true,
+      });
+    }
+    await page.setExtraHTTPHeaders({
+      "Accept-Language": "en-US,en;q=0.9,fil;q=0.8",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    });
 
     // Block images/media/fonts — we only need HTML text and meta tags
     await page.setRequestInterception(true);
@@ -51,8 +95,17 @@ async function fetchHtml(url: string): Promise<string> {
       }
     });
 
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-    return await page.content();
+    const response = await page.goto(candidate.url, {
+      waitUntil: "domcontentloaded",
+      timeout: 45000,
+    });
+    const html = await page.content();
+
+    if (response?.status() === 403 || isAccessDeniedHtml(html)) {
+      throw new Error(`Access denied while fetching ${candidate.url}`);
+    }
+
+    return html;
   } catch (err) {
     throw new Error(
       `Failed to fetch article: ${err instanceof Error ? err.message : String(err)}`
@@ -62,6 +115,53 @@ async function fetchHtml(url: string): Promise<string> {
       await page.close();
     }
   }
+}
+
+function buildFetchCandidates(url: string): FetchCandidate[] {
+  const candidates: FetchCandidate[] = [
+    { url, userAgent: DESKTOP_USER_AGENT },
+  ];
+
+  try {
+    const parsed = new URL(url);
+
+    if (!parsed.searchParams.has("amp")) {
+      const amp = new URL(parsed);
+      amp.searchParams.set("amp", "");
+      candidates.push({
+        url: amp.toString(),
+        userAgent: MOBILE_USER_AGENT,
+        isMobile: true,
+      });
+    }
+
+    if (!parsed.searchParams.has("output")) {
+      const output = new URL(parsed);
+      output.searchParams.set("output", "1");
+      candidates.push({
+        url: output.toString(),
+        userAgent: MOBILE_USER_AGENT,
+        isMobile: true,
+      });
+    }
+  } catch {
+    // The caller validates URLs before this point; keep original candidate only.
+  }
+
+  return candidates.filter(
+    (candidate, index, list) =>
+      list.findIndex((item) => item.url === candidate.url) === index
+  );
+}
+
+function isAccessDeniedHtml(html: string): boolean {
+  const lowered = html.slice(0, 5000).toLowerCase();
+  return (
+    lowered.includes("<title>403") ||
+    lowered.includes("403 - forbidden") ||
+    lowered.includes("access denied") ||
+    lowered.includes("request forbidden")
+  );
 }
 
 /**

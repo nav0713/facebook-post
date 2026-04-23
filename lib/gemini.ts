@@ -9,6 +9,12 @@ import { truncateText, safeJsonParse } from "@/lib/utils";
 
 const MAX_ARTICLE_CHARS = 6_000;
 
+interface AlternateTitleInput {
+  extraction: ExtractionResult;
+  metadata: ArticleMetadata;
+  currentTitle: string | null;
+}
+
 function buildPrompt(articleText: string, metadata: ArticleMetadata): string {
   const truncated = truncateText(articleText, MAX_ARTICLE_CHARS);
 
@@ -19,12 +25,13 @@ Rules:
 - Return null for missing fields.
 - Be concise: keep all text responses SHORT.
 - Use natural Taglish (mix English/Tagalog as Filipinos speak naturally).
+- "taglishTitle": make it a concise, high-impact news graphic headline. Remove filler words and keep only the core message.
 - "hashtags": 5–8 relevant hashtags in English or Filipino, each starting with #.
 
 Return EXACTLY this JSON (keep all text responses VERY SHORT):
 {
   "originalTitle": "string or null",
-  "taglishTitle": "short title in Taglish (max 15 words)",
+  "taglishTitle": "concise high-impact title in Taglish (max 10 words)",
   "summary": "1-2 sentences in Taglish, concise",
   "keyPoints": ["short point 1", "short point 2"],
   "who": ["name or entity"],
@@ -176,4 +183,319 @@ export async function extractWithGemini(
   }
 
   return validateResult(parsed);
+}
+
+export async function generateAlternateTitleWithGemini({
+  extraction,
+  metadata,
+  currentTitle,
+}: AlternateTitleInput): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "GEMINI_API_KEY is not set. Please add it to your .env.local file.",
+    );
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-pro",
+    generationConfig: {
+      temperature: 0.85,
+      topP: 0.95,
+      maxOutputTokens: 512,
+      responseMimeType: "application/json",
+    },
+    safetySettings: [
+      {
+        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+    ],
+  });
+
+  const context = {
+    anchorTitle: metadata.originalTitle ?? extraction.originalTitle,
+    currentTitle,
+    summary: extraction.summary,
+    what: sanitizeTitleContext(extraction.what),
+    who: extraction.who,
+    where: extraction.where,
+    when: extraction.when,
+    source: metadata.source ?? extraction.source,
+  };
+
+  const prompt = `Write ONE alternate Taglish news headline for a modern social news graphic.
+
+Rules:
+- Base the title ONLY on the provided facts. Do not invent details.
+- Use natural Taglish.
+- Make it relevant, urgent, curiosity-driven, and high-impact.
+- Preserve the main person/entity and issue from the anchor title.
+- Prefer a social-news hook, but do not exaggerate beyond the facts.
+- Maximum 10 words.
+- Use different wording from the current title.
+- Avoid generic titles like "Bagong anggulo sa balita".
+- Remove filler words.
+
+Return EXACTLY this JSON:
+{
+  "taglishTitle": "string"
+}
+
+Facts:
+${JSON.stringify(context, null, 2)}`;
+
+  let rawText: string | null = null;
+  try {
+    const result = await model.generateContent(prompt);
+    rawText = getGeminiResponseText(result.response);
+
+    if (!rawText) {
+      const response = result.response as unknown as {
+        promptFeedback?: unknown;
+        candidates?: Array<{ finishReason?: unknown; finishMessage?: unknown }>;
+      };
+      console.warn("[Gemini] Empty alternate title response:", {
+        promptFeedback: response.promptFeedback,
+        finishReason: response.candidates?.[0]?.finishReason,
+        finishMessage: response.candidates?.[0]?.finishMessage,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[Gemini] Alternate title generation failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  if (!rawText) {
+    return buildFallbackAlternateTitle(extraction, metadata, currentTitle);
+  }
+
+  const parsed = safeJsonParse<{ taglishTitle?: unknown }>(rawText);
+  if (!parsed) {
+    console.warn("[Gemini] Could not parse alternate title response:", rawText);
+    return buildFallbackAlternateTitle(extraction, metadata, currentTitle);
+  }
+
+  const title = parsed.taglishTitle;
+  if (typeof title !== "string" || !title.trim()) {
+    return buildFallbackAlternateTitle(extraction, metadata, currentTitle);
+  }
+
+  const cleanedTitle = compactFallbackTitle(title);
+  if (
+    !cleanedTitle ||
+    !isRelevantAlternateTitle(cleanedTitle, extraction, metadata, currentTitle)
+  ) {
+    return buildFallbackAlternateTitle(extraction, metadata, currentTitle);
+  }
+
+  return cleanedTitle;
+}
+
+function getGeminiResponseText(response: unknown): string | null {
+  const maybeText = response as { text?: () => string };
+
+  try {
+    const text = maybeText.text?.().trim();
+    if (text) return text;
+  } catch {
+    // Fall through to manual candidate parsing.
+  }
+
+  const structured = response as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+    }>;
+  };
+
+  const text = structured.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text ?? "")
+    .join("")
+    .trim();
+
+  return text || null;
+}
+
+function sanitizeTitleContext(text: string | null): string | null {
+  if (!text) return null;
+  return text
+    .replace(/suic(?:ide|__e)/gi, "sensitive remark")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildFallbackAlternateTitle(
+  extraction: ExtractionResult,
+  metadata: ArticleMetadata,
+  currentTitle: string | null,
+): string {
+  const current = normalizeForCompare(currentTitle);
+  const anchor = compactFallbackTitle(
+    metadata.originalTitle ?? extraction.originalTitle ?? currentTitle,
+  );
+  const primaryEntity = pickPrimaryEntity(extraction, anchor);
+  const issue = pickIssuePhrase(extraction, metadata);
+  const templates = buildFallbackTitleTemplates(primaryEntity, issue, anchor);
+
+  for (const candidate of templates) {
+    const title = compactFallbackTitle(candidate);
+    if (
+      title &&
+      normalizeForCompare(title) !== current &&
+      isRelevantAlternateTitle(title, extraction, metadata, currentTitle)
+    ) {
+      return title;
+    }
+  }
+
+  return anchor && normalizeForCompare(anchor) !== current
+    ? anchor
+    : "Mainit na isyu, umani ng reaksyon";
+}
+
+function compactFallbackTitle(text: string | null): string | null {
+  if (!text?.trim()) return null;
+
+  const words = text
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[^A-Za-z0-9À-ž\s'"-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (words.length === 0) return null;
+  return words.slice(0, 10).join(" ");
+}
+
+function normalizeForCompare(text: string | null): string {
+  return (text ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9à-ž]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isRelevantAlternateTitle(
+  title: string,
+  extraction: ExtractionResult,
+  metadata: ArticleMetadata,
+  currentTitle: string | null,
+): boolean {
+  const normalizedTitle = normalizeForCompare(title);
+  if (!normalizedTitle || normalizedTitle === normalizeForCompare(currentTitle)) {
+    return false;
+  }
+
+  const anchors = [
+    metadata.originalTitle,
+    extraction.originalTitle,
+    extraction.what,
+    extraction.summary,
+    ...extraction.who,
+    ...extraction.keyPoints,
+  ]
+    .map(normalizeForCompare)
+    .join(" ");
+
+  const titleTokens = importantTokens(normalizedTitle);
+  if (titleTokens.length === 0) return false;
+
+  return titleTokens.some((token) => anchors.includes(token));
+}
+
+function importantTokens(text: string): string[] {
+  const stopWords = new Set([
+    "ang",
+    "and",
+    "are",
+    "bagong",
+    "dahil",
+    "ito",
+    "kay",
+    "kung",
+    "may",
+    "mga",
+    "nag",
+    "na",
+    "ng",
+    "sa",
+    "si",
+    "the",
+    "umani",
+  ]);
+
+  return text
+    .split(/\s+/)
+    .filter((word) => word.length >= 3 && !stopWords.has(word));
+}
+
+function pickPrimaryEntity(
+  extraction: ExtractionResult,
+  anchor: string | null,
+): string {
+  const who = extraction.who.find((item) => item.trim());
+  if (who) return compactFallbackTitle(who) ?? who;
+
+  const anchorWords = anchor?.split(/\s+/).filter(Boolean) ?? [];
+  if (anchorWords.length > 0) {
+    return anchorWords.slice(0, Math.min(3, anchorWords.length)).join(" ");
+  }
+
+  return "Isyu";
+}
+
+function pickIssuePhrase(
+  extraction: ExtractionResult,
+  metadata: ArticleMetadata,
+): string {
+  const fields = [
+    extraction.what,
+    extraction.summary,
+    extraction.keyPoints[0],
+    metadata.originalTitle,
+    extraction.originalTitle,
+  ];
+
+  for (const field of fields) {
+    const cleaned = compactFallbackTitle(field);
+    if (cleaned) return cleaned;
+  }
+
+  return "viral na isyu";
+}
+
+function buildFallbackTitleTemplates(
+  entity: string,
+  issue: string,
+  anchor: string | null,
+): string[] {
+  const issueWords = issue.split(/\s+/).filter(Boolean);
+  const shortIssue = issueWords.slice(0, 6).join(" ");
+
+  return [
+    `${entity}, inulan ng batikos`,
+    `${entity}, umani ng matinding reaksyon`,
+    `Biro ni ${entity}, pinag-uusapan ngayon`,
+    `${entity}, bakit kinuyog online?`,
+    `Netizens umalma sa isyu ni ${entity}`,
+    `${shortIssue}, nag-trending online`,
+    anchor ?? issue,
+  ];
 }

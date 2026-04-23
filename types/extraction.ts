@@ -37,3 +37,17 @@ export interface ExtractApiError {
 }
 
 export type ExtractResponse = ExtractApiResponse | ExtractApiError;
+
+export interface RefreshTitleApiResponse {
+  success: true;
+  taglishTitle: string;
+}
+
+export interface RefreshTitleApiError {
+  success: false;
+  error: string;
+}
+
+export type RefreshTitleResponse =
+  | RefreshTitleApiResponse
+  | RefreshTitleApiError;
