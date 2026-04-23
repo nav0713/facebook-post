@@ -7,7 +7,7 @@ import type { ArticleMetadata } from "@/types/extraction";
 import type { ExtractionResult } from "@/types/extraction";
 import { truncateText, safeJsonParse } from "@/lib/utils";
 
-const MAX_ARTICLE_CHARS = 6_000;
+const MAX_ARTICLE_CHARS = 8_000;
 
 interface AlternateTitleInput {
   extraction: ExtractionResult;
@@ -23,16 +23,18 @@ function buildPrompt(articleText: string, metadata: ArticleMetadata): string {
 Rules:
 - Base answers ONLY on provided text. Do not invent facts.
 - Return null for missing fields.
-- Be concise: keep all text responses SHORT.
+- Be concise for structured fields, but keep the summary and Facebook caption informative.
 - Use natural Taglish (mix English/Tagalog as Filipinos speak naturally).
 - "taglishTitle": make it a concise, high-impact news graphic headline. Remove filler words and keep only the core message.
+- "summary": preserve the most important facts. Include key who/what/when/where/why details when available.
+- "facebookCaption": preserve the important context and key details from the article. Make it readable, informative, and complete without inventing facts.
 - "hashtags": 5–8 relevant hashtags in English or Filipino, each starting with #.
 
-Return EXACTLY this JSON (keep all text responses VERY SHORT):
+Return EXACTLY this JSON:
 {
   "originalTitle": "string or null",
   "taglishTitle": "concise high-impact title in Taglish (max 10 words)",
-  "summary": "1-2 sentences in Taglish, concise",
+  "summary": "informative Taglish summary, around 3-5 sentences, with important details intact",
   "keyPoints": ["short point 1", "short point 2"],
   "who": ["name or entity"],
   "what": "what happened (1 short sentence in Taglish)",
@@ -44,7 +46,7 @@ Return EXACTLY this JSON (keep all text responses VERY SHORT):
   "author": "string or null",
   "publishedDate": "string or null",
   "source": "string or null",
-  "facebookCaption": "2 short paragraphs in Taglish for Facebook share"
+  "facebookCaption": "3-4 paragraphs max in Taglish for Facebook share, informative and detailed"
 }
 
 Metadata:

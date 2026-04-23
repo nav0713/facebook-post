@@ -2,12 +2,44 @@
 
 import { useState } from "react";
 
-const CANVAS_SIZE = 1080;
-const SAFE_PAD = 76;
-const LOGO_SIZE = 104;
-const TITLE_TOP = 728;
-const HEADLINE_MAX_WORDS = 12;
-const SUBCONTENT_TOP_GAP = 30;
+const GRAPHIC = {
+  size: 1080,
+  safeX: 56,
+  safeBottom: 48,
+  topPad: 24,
+  accent: {
+    x: 56,
+    y: 626,
+    width: 168,
+    height: 10,
+  },
+  badge: {
+    size: 136,
+    ringPadding: 10,
+  },
+  photo: {
+    brightness: 1.18,
+    contrast: 1.04,
+    saturate: 1.08,
+  },
+  overlay: {
+    topWashHeight: 340,
+    lowerBandTop: 608,
+    titleVeilTop: 620,
+  },
+  headline: {
+    top: 648,
+    maxWords: 12,
+    minFontSize: 58,
+    maxFontSize: 86,
+  },
+  detail: {
+    gapTop: 18,
+    minFontSize: 32,
+    maxFontSize: 32,
+    maxLines: 4,
+  },
+} as const;
 
 interface GraphicGeneratorProps {
   imageUrl: string | null;
@@ -17,10 +49,21 @@ interface GraphicGeneratorProps {
   hashtags: string[];
 }
 
+interface GraphicAssets {
+  background: ImageBitmap | null;
+  logo: HTMLImageElement | null;
+}
+
 type Status = "idle" | "generating" | "done" | "error";
 type PostStatus = "idle" | "posting" | "posted" | "post-error";
 
-export default function GraphicGenerator({ imageUrl, taglishTitle, what, summary, hashtags }: GraphicGeneratorProps) {
+export default function GraphicGenerator({
+  imageUrl,
+  taglishTitle,
+  what,
+  summary,
+  hashtags,
+}: GraphicGeneratorProps) {
   const [status, setStatus] = useState<Status>("idle");
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [postStatus, setPostStatus] = useState<PostStatus>("idle");
@@ -28,91 +71,27 @@ export default function GraphicGenerator({ imageUrl, taglishTitle, what, summary
 
   const generate = async () => {
     setStatus("generating");
+
     try {
-      const canvas = document.createElement("canvas");
-      canvas.width = CANVAS_SIZE;
-      canvas.height = CANVAS_SIZE;
-      const ctx = canvas.getContext("2d")!;
-
-      // Base fill
-      ctx.fillStyle = "#0b0f14";
-      ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-
       await Promise.all([
         document.fonts.load("400 92px Anton"),
         document.fonts.load("500 32px JetBrains Mono"),
       ]);
 
-      let hasArticleImage = false;
+      const assets = await loadGraphicAssets(imageUrl);
+      const canvas = document.createElement("canvas");
+      canvas.width = GRAPHIC.size;
+      canvas.height = GRAPHIC.size;
 
-      // Article image as a full-bleed, editorial background.
-      if (imageUrl) {
-        try {
-          const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(imageUrl)}`;
-          const res = await fetch(proxyUrl);
-          if (!res.ok) throw new Error("Image proxy failed");
-          const blob = await res.blob();
-          const bitmap = await createImageBitmap(blob);
-
-          const { naturalWidth: iw, naturalHeight: ih } = { naturalWidth: bitmap.width, naturalHeight: bitmap.height };
-          const targetW = CANVAS_SIZE;
-          const targetH = CANVAS_SIZE;
-          const scale = Math.max(targetW / iw, targetH / ih);
-          const drawW = iw * scale;
-          const drawH = ih * scale;
-          const offsetX = (targetW - drawW) / 2;
-          const offsetY = (targetH - drawH) / 2;
-
-          ctx.save();
-          ctx.filter = "brightness(1.24) contrast(1.04) saturate(1.1)";
-          ctx.beginPath();
-          ctx.rect(0, 0, targetW, targetH);
-          ctx.clip();
-          ctx.drawImage(bitmap, offsetX, offsetY, drawW, drawH);
-          ctx.restore();
-          hasArticleImage = true;
-        } catch {
-          drawFallbackBackground(ctx);
-        }
-      } else {
-        drawFallbackBackground(ctx);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        throw new Error("Canvas context unavailable");
       }
 
-      if (hasArticleImage) {
-        sharpenCanvas(ctx, 0.2);
-      }
-
-      drawEditorialOverlays(ctx);
-      drawAccentRule(ctx);
-
-      // Logo badge
-      try {
-        const logo = await loadImage("/assets/logo.png");
-        const logoX = CANVAS_SIZE - LOGO_SIZE - SAFE_PAD;
-        const logoY = SAFE_PAD;
-        const logoCX = logoX + LOGO_SIZE / 2;
-        const logoCY = logoY + LOGO_SIZE / 2;
-        ctx.save();
-        ctx.shadowColor = "rgba(0,0,0,0.35)";
-        ctx.shadowBlur = 24;
-        ctx.fillStyle = "rgba(7,10,14,0.76)";
-        ctx.beginPath();
-        ctx.arc(logoCX, logoCY, LOGO_SIZE / 2 + 10, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(logoCX, logoCY, LOGO_SIZE / 2, 0, Math.PI * 2);
-        ctx.clip();
-        ctx.drawImage(logo, logoX, logoY, LOGO_SIZE, LOGO_SIZE);
-        ctx.restore();
-      } catch {
-        // No logo — skip
-      }
-
-      const titleLayout = drawTitle(ctx, taglishTitle ?? "");
-      drawSubcontent(ctx, what, titleLayout.bottom + SUBCONTENT_TOP_GAP);
+      renderGraphic(ctx, assets, {
+        title: taglishTitle,
+        detail: what,
+      });
 
       setDataUrl(canvas.toDataURL("image/png"));
       setStatus("done");
@@ -133,15 +112,18 @@ export default function GraphicGenerator({ imageUrl, taglishTitle, what, summary
     if (!dataUrl) return;
     setPostStatus("posting");
     setPostError(null);
+
     const titlePart = taglishTitle ? toBoldUnicode(taglishTitle) : null;
     const hashtagLine = hashtags.length > 0 ? hashtags.join(" ") : null;
     const caption = [titlePart, summary, hashtagLine].filter(Boolean).join("\n\n");
+
     try {
       const res = await fetch("/api/post-to-facebook", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageDataUrl: dataUrl, caption }),
       });
+
       const json = await res.json() as { success?: boolean; error?: string };
       if (!res.ok || !json.success) {
         setPostError(json.error ?? "May nangyaring mali.");
@@ -197,7 +179,6 @@ export default function GraphicGenerator({ imageUrl, taglishTitle, what, summary
             className="w-full rounded-xl border border-[#1e1c14]"
           />
 
-          {/* Download + regenerate */}
           <div className="flex gap-3">
             <button
               onClick={download}
@@ -206,14 +187,17 @@ export default function GraphicGenerator({ imageUrl, taglishTitle, what, summary
               I-download (1080×1080)
             </button>
             <button
-              onClick={() => { setStatus("idle"); setDataUrl(null); setPostStatus("idle"); }}
+              onClick={() => {
+                setStatus("idle");
+                setDataUrl(null);
+                setPostStatus("idle");
+              }}
               className="px-4 py-3 rounded-xl border border-[#2e2b1e] text-[#7a7468] text-sm hover:text-[#c5c0b4] transition-colors"
             >
               Muli
             </button>
           </div>
 
-          {/* Facebook post */}
           <div className="pt-1 border-t border-[#1e1c14] space-y-2">
             {postStatus !== "posted" && (
               <button
@@ -256,136 +240,252 @@ export default function GraphicGenerator({ imageUrl, taglishTitle, what, summary
   );
 }
 
-function toBoldUnicode(text: string): string {
-  return Array.from(text).map((char) => {
-    const c = char.codePointAt(0)!;
-    if (c >= 65 && c <= 90) return String.fromCodePoint(0x1d5d4 + c - 65);  // A-Z
-    if (c >= 97 && c <= 122) return String.fromCodePoint(0x1d5ee + c - 97); // a-z
-    if (c >= 48 && c <= 57) return String.fromCodePoint(0x1d7ec + c - 48);  // 0-9
-    return char;
-  }).join("");
+async function loadGraphicAssets(imageUrl: string | null): Promise<GraphicAssets> {
+  const [background, logo] = await Promise.all([
+    loadBackgroundBitmap(imageUrl),
+    loadImage("/assets/logo.png").catch(() => null),
+  ]);
+
+  return { background, logo };
 }
 
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = src;
-  });
+async function loadBackgroundBitmap(imageUrl: string | null): Promise<ImageBitmap | null> {
+  if (!imageUrl) return null;
+
+  try {
+    const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(imageUrl)}`;
+    const res = await fetch(proxyUrl);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await createImageBitmap(blob);
+  } catch {
+    return null;
+  }
+}
+
+function renderGraphic(
+  ctx: CanvasRenderingContext2D,
+  assets: GraphicAssets,
+  content: {
+    title: string | null;
+    detail: string | null;
+  },
+) {
+  fillBase(ctx);
+  drawBackdrop(ctx, assets.background);
+  drawReferenceOverlays(ctx);
+  drawAccentRule(ctx);
+  drawBrandBadge(ctx, assets.logo);
+
+  const headline = fitHeadlineBlock(ctx, content.title);
+  drawHeadlineBlock(ctx, headline);
+
+  const detailTop = headline.bottom + GRAPHIC.detail.gapTop;
+  const detail = fitDetailBlock(ctx, content.detail, detailTop);
+  if (detail) {
+    drawDetailBlock(ctx, detail, detailTop);
+  }
+}
+
+function fillBase(ctx: CanvasRenderingContext2D) {
+  ctx.fillStyle = "#0b0f14";
+  ctx.fillRect(0, 0, GRAPHIC.size, GRAPHIC.size);
+}
+
+function drawBackdrop(ctx: CanvasRenderingContext2D, background: ImageBitmap | null) {
+  if (!background) {
+    drawFallbackBackground(ctx);
+    return;
+  }
+
+  const scale = Math.max(
+    GRAPHIC.size / background.width,
+    GRAPHIC.size / background.height,
+  );
+  const drawW = background.width * scale;
+  const drawH = background.height * scale;
+  const offsetX = (GRAPHIC.size - drawW) / 2;
+  const offsetY = (GRAPHIC.size - drawH) / 2;
+
+  ctx.save();
+  ctx.filter = `brightness(${GRAPHIC.photo.brightness}) contrast(${GRAPHIC.photo.contrast}) saturate(${GRAPHIC.photo.saturate})`;
+  ctx.drawImage(background, offsetX, offsetY, drawW, drawH);
+  ctx.restore();
 }
 
 function drawFallbackBackground(ctx: CanvasRenderingContext2D) {
-  const grad = ctx.createLinearGradient(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  const grad = ctx.createLinearGradient(0, 0, GRAPHIC.size, GRAPHIC.size);
   grad.addColorStop(0, "#27303a");
-  grad.addColorStop(0.48, "#111923");
+  grad.addColorStop(0.5, "#111923");
   grad.addColorStop(1, "#0a0f16");
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-
-  ctx.fillStyle = "rgba(255, 215, 0, 0.08)";
-  ctx.fillRect(0, 0, 18, CANVAS_SIZE);
+  ctx.fillRect(0, 0, GRAPHIC.size, GRAPHIC.size);
 }
 
-function drawEditorialOverlays(ctx: CanvasRenderingContext2D) {
-  ctx.fillStyle = "rgba(5, 8, 12, 0.12)";
-  ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+function drawReferenceOverlays(ctx: CanvasRenderingContext2D) {
+  ctx.fillStyle = "rgba(8, 11, 17, 0.1)";
+  ctx.fillRect(0, 0, GRAPHIC.size, GRAPHIC.size);
 
   ctx.fillStyle = "rgba(255,255,255,0.08)";
-  ctx.fillRect(0, 0, CANVAS_SIZE, 360);
+  ctx.fillRect(0, 0, GRAPHIC.size, GRAPHIC.overlay.topWashHeight);
 
-  const bottom = ctx.createLinearGradient(0, 260, 0, CANVAS_SIZE);
-  bottom.addColorStop(0, "rgba(5,8,12,0)");
-  bottom.addColorStop(0.55, "rgba(5,8,12,0.38)");
-  bottom.addColorStop(1, "rgba(5,8,12,0.78)");
-  ctx.fillStyle = bottom;
-  ctx.fillRect(0, 260, CANVAS_SIZE, CANVAS_SIZE - 260);
+  const lowerBand = ctx.createLinearGradient(
+    0,
+    GRAPHIC.overlay.lowerBandTop,
+    0,
+    GRAPHIC.size,
+  );
+  lowerBand.addColorStop(0, "rgba(0,0,0,0)");
+  lowerBand.addColorStop(0.24, "rgba(0,0,0,0.18)");
+  lowerBand.addColorStop(0.55, "rgba(0,0,0,0.56)");
+  lowerBand.addColorStop(1, "rgba(0,0,0,0.9)");
+  ctx.fillStyle = lowerBand;
+  ctx.fillRect(
+    0,
+    GRAPHIC.overlay.lowerBandTop,
+    GRAPHIC.size,
+    GRAPHIC.size - GRAPHIC.overlay.lowerBandTop,
+  );
 
-  const left = ctx.createLinearGradient(0, 0, CANVAS_SIZE, 0);
-  left.addColorStop(0, "rgba(5,8,12,0.26)");
-  left.addColorStop(0.5, "rgba(5,8,12,0.03)");
-  left.addColorStop(1, "rgba(5,8,12,0.14)");
-  ctx.fillStyle = left;
-  ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-}
+  const titleVeil = ctx.createLinearGradient(
+    0,
+    GRAPHIC.size,
+    0,
+    GRAPHIC.overlay.titleVeilTop,
+  );
+  titleVeil.addColorStop(0, "rgba(0,0,0,0.82)");
+  titleVeil.addColorStop(0.36, "rgba(0,0,0,0.58)");
+  titleVeil.addColorStop(0.72, "rgba(0,0,0,0.2)");
+  titleVeil.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = titleVeil;
+  ctx.fillRect(
+    0,
+    GRAPHIC.overlay.titleVeilTop,
+    GRAPHIC.size,
+    GRAPHIC.size - GRAPHIC.overlay.titleVeilTop,
+  );
 
-function sharpenCanvas(ctx: CanvasRenderingContext2D, amount: number) {
-  try {
-    const imageData = ctx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-    const src = imageData.data;
-    const out = new Uint8ClampedArray(src);
-    const stride = CANVAS_SIZE * 4;
-
-    for (let y = 1; y < CANVAS_SIZE - 1; y += 1) {
-      for (let x = 1; x < CANVAS_SIZE - 1; x += 1) {
-        const i = y * stride + x * 4;
-        const top = i - stride;
-        const bottom = i + stride;
-        const left = i - 4;
-        const right = i + 4;
-
-        for (let c = 0; c < 3; c += 1) {
-          out[i + c] =
-            src[i + c] * (1 + amount * 4) -
-            (src[top + c] + src[bottom + c] + src[left + c] + src[right + c]) * amount;
-        }
-      }
-    }
-
-    imageData.data.set(out);
-    ctx.putImageData(imageData, 0, 0);
-  } catch {
-    // If a browser blocks pixel access, keep the already enhanced image.
-  }
+  const sideShade = ctx.createLinearGradient(0, 0, GRAPHIC.size, 0);
+  sideShade.addColorStop(0, "rgba(0,0,0,0.22)");
+  sideShade.addColorStop(0.5, "rgba(0,0,0,0.03)");
+  sideShade.addColorStop(1, "rgba(0,0,0,0.14)");
+  ctx.fillStyle = sideShade;
+  ctx.fillRect(0, 0, GRAPHIC.size, GRAPHIC.size);
 }
 
 function drawAccentRule(ctx: CanvasRenderingContext2D) {
   ctx.fillStyle = "#f4c430";
-  ctx.fillRect(SAFE_PAD, 690, 148, 10);
+  ctx.fillRect(
+    GRAPHIC.accent.x,
+    GRAPHIC.accent.y,
+    GRAPHIC.accent.width,
+    GRAPHIC.accent.height,
+  );
 }
 
-function drawTitle(ctx: CanvasRenderingContext2D, title: string): { bottom: number } {
-  const lines = buildTwoLineHeadline(title);
-  const fit = fitTwoLineTitle(ctx, lines);
+function drawBrandBadge(ctx: CanvasRenderingContext2D, logo: HTMLImageElement | null) {
+  if (!logo) return;
 
+  const x = GRAPHIC.size - GRAPHIC.badge.size - GRAPHIC.topPad;
+  const y = GRAPHIC.topPad;
+  const cx = x + GRAPHIC.badge.size / 2;
+  const cy = y + GRAPHIC.badge.size / 2;
+
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.38)";
+  ctx.shadowBlur = 26;
+  ctx.fillStyle = "rgba(8,10,14,0.74)";
+  ctx.beginPath();
+  ctx.arc(
+    cx,
+    cy,
+    GRAPHIC.badge.size / 2 + GRAPHIC.badge.ringPadding,
+    0,
+    Math.PI * 2,
+  );
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, GRAPHIC.badge.size / 2, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.drawImage(logo, x, y, GRAPHIC.badge.size, GRAPHIC.badge.size);
+  ctx.restore();
+}
+
+function fitHeadlineBlock(
+  ctx: CanvasRenderingContext2D,
+  title: string | null,
+): {
+  lines: [string, string];
+  fontSize: number;
+  lineHeight: number;
+  bottom: number;
+} {
+  const lines = buildHeadlineLines(title);
+  const maxWidth = GRAPHIC.size - GRAPHIC.safeX * 2;
+  const maxHeight = 176;
+
+  for (
+    let fontSize = GRAPHIC.headline.maxFontSize;
+    fontSize >= GRAPHIC.headline.minFontSize;
+    fontSize -= 2
+  ) {
+    ctx.font = `400 ${fontSize}px Anton`;
+    const lineHeight = Math.round(fontSize * 1.05);
+    const fitsWidth = lines.every((line) => ctx.measureText(line).width <= maxWidth);
+    if (fitsWidth && lineHeight * 2 <= maxHeight) {
+      return {
+        lines,
+        fontSize,
+        lineHeight,
+        bottom: GRAPHIC.headline.top + lineHeight * 2,
+      };
+    }
+  }
+
+  const fontSize = GRAPHIC.headline.minFontSize;
+  ctx.font = `400 ${fontSize}px Anton`;
+  const finalLines: [string, string] = [
+    trimToWidth(ctx, lines[0], maxWidth),
+    trimToWidth(ctx, lines[1], maxWidth),
+  ];
+  const lineHeight = Math.round(fontSize * 1.08);
+
+  return {
+    lines: finalLines,
+    fontSize,
+    lineHeight,
+    bottom: GRAPHIC.headline.top + lineHeight * 2,
+  };
+}
+
+function drawHeadlineBlock(
+  ctx: CanvasRenderingContext2D,
+  layout: {
+    lines: [string, string];
+    fontSize: number;
+    lineHeight: number;
+  },
+) {
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  ctx.shadowColor = "rgba(0,0,0,0.45)";
+  ctx.font = `400 ${layout.fontSize}px Anton`;
+  ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(2, Math.round(layout.fontSize * 0.055));
+  ctx.shadowColor = "rgba(0,0,0,0.4)";
   ctx.shadowBlur = 18;
   ctx.shadowOffsetY = 8;
 
-  ctx.font = `400 ${fit.fontSize}px Anton`;
-  ctx.fillStyle = "#ffffff";
-  ctx.fillText(fit.lines[0], SAFE_PAD, TITLE_TOP);
+  const colors = ["#ffe900", "#ffffff"] as const;
 
-  ctx.fillStyle = "#ffd23f";
-  ctx.fillText(fit.lines[1], SAFE_PAD, TITLE_TOP + fit.lineHeight);
-
-  ctx.shadowColor = "transparent";
-  ctx.shadowBlur = 0;
-  ctx.shadowOffsetY = 0;
-
-  return { bottom: TITLE_TOP + fit.lineHeight * 2 };
-}
-
-function drawSubcontent(ctx: CanvasRenderingContext2D, what: string | null, top: number) {
-  const clean = cleanSubcontent(what);
-  if (!clean) return;
-
-  const maxWidth = CANVAS_SIZE - SAFE_PAD * 2;
-  const maxHeight = CANVAS_SIZE - SAFE_PAD - top;
-  const fit = fitSubcontent(ctx, clean, maxWidth, maxHeight);
-
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  ctx.shadowColor = "rgba(0,0,0,0.45)";
-  ctx.shadowBlur = 12;
-  ctx.shadowOffsetY = 5;
-  ctx.font = `500 ${fit.fontSize}px JetBrains Mono`;
-  ctx.fillStyle = "rgba(255,255,255,0.9)";
-
-  fit.lines.forEach((line, index) => {
-    ctx.fillText(line, SAFE_PAD, top + index * fit.lineHeight);
+  layout.lines.forEach((line, index) => {
+    const y = GRAPHIC.headline.top + index * layout.lineHeight;
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.strokeText(line, GRAPHIC.safeX, y);
+    ctx.fillStyle = colors[index % colors.length];
+    ctx.fillText(line, GRAPHIC.safeX, y);
   });
 
   ctx.shadowColor = "transparent";
@@ -393,20 +493,12 @@ function drawSubcontent(ctx: CanvasRenderingContext2D, what: string | null, top:
   ctx.shadowOffsetY = 0;
 }
 
-function cleanSubcontent(text: string | null): string | null {
-  if (!text?.trim()) return null;
-
-  const cleaned = text
-    .replace(/\s+/g, " ")
-    .replace(/^[\s:|,-]*(ano|what)\s*[:|-]\s*/i, "")
-    .trim();
-
-  return cleaned || null;
-}
-
-function buildTwoLineHeadline(title: string): [string, string] {
+function buildHeadlineLines(title: string | null): [string, string] {
   const cleaned = cleanHeadline(title);
-  const words = cleaned.split(/\s+/).filter(Boolean).slice(0, HEADLINE_MAX_WORDS);
+  const words = cleaned
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, GRAPHIC.headline.maxWords);
 
   if (words.length === 0) return ["NEWS", "UPDATE"];
   if (words.length === 1) return [words[0], "UPDATE"];
@@ -418,15 +510,18 @@ function buildTwoLineHeadline(title: string): [string, string] {
   ];
 }
 
-function cleanHeadline(title: string): string {
-  const cleaned = title
+function cleanHeadline(title: string | null): string {
+  const cleaned = (title ?? "")
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'")
     .replace(/\s+/g, " ")
-    .replace(/^[\s:|,-]*(breaking|latest|update|just in|look|watch|read|alam[in]?|viral)\s*[:|-]\s*/i, "")
+    .replace(
+      /^[\s:|,-]*(breaking|latest|update|just in|look|watch|read|alam[in]?|viral)\s*[:|-]\s*/i,
+      "",
+    )
     .trim();
 
-  return cleaned || title.trim();
+  return cleaned || "NEWS UPDATE";
 }
 
 function findBalancedSplit(words: string[]): number {
@@ -439,9 +534,7 @@ function findBalancedSplit(words: string[]): number {
     runningChars += words[i - 1].length;
     const firstChars = runningChars + i - 1;
     const secondChars = totalChars - runningChars + words.length - i - 1;
-    const balanceScore = Math.abs(firstChars - secondChars);
-    const topHeavyPenalty = firstChars > secondChars ? 8 : 0;
-    const score = balanceScore + topHeavyPenalty;
+    const score = Math.abs(firstChars - secondChars) + (firstChars > secondChars ? 8 : 0);
 
     if (score < bestScore) {
       bestScore = score;
@@ -452,70 +545,95 @@ function findBalancedSplit(words: string[]): number {
   return bestIndex;
 }
 
-function fitTwoLineTitle(
+function fitDetailBlock(
   ctx: CanvasRenderingContext2D,
-  lines: [string, string],
-): { lines: [string, string]; fontSize: number; lineHeight: number } {
-  const maxWidth = CANVAS_SIZE - SAFE_PAD * 2;
-  const maxHeight = 172;
-  const minFontSize = 46;
+  detail: string | null,
+  top: number,
+): {
+  lines: string[];
+  fontSize: number;
+  lineHeight: number;
+} | null {
+  const candidates = buildDetailCandidates(detail);
+  if (candidates.length === 0) return null;
 
-  for (let fontSize = 86; fontSize >= minFontSize; fontSize -= 2) {
-    ctx.font = `400 ${fontSize}px Anton`;
-    const lineHeight = Math.round(fontSize * 1.05);
-    const fits = lines.every((line) => ctx.measureText(line).width <= maxWidth);
-    if (fits && lineHeight * 2 <= maxHeight) {
-      return { lines, fontSize, lineHeight };
-    }
-  }
+  const maxWidth = GRAPHIC.size - GRAPHIC.safeX * 2;
+  const maxHeight = GRAPHIC.size - GRAPHIC.safeBottom - top;
+  const maxLines = GRAPHIC.detail.maxLines;
 
-  ctx.font = `400 ${minFontSize}px Anton`;
-  return {
-    lines: [
-      trimToWidth(ctx, lines[0], maxWidth),
-      trimToWidth(ctx, lines[1], maxWidth),
-    ],
-    fontSize: minFontSize,
-    lineHeight: Math.round(minFontSize * 1.08),
-  };
-}
-
-function trimToWidth(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
-  if (ctx.measureText(text).width <= maxWidth) return text;
-
-  let result = text;
-  while (result.length > 1 && ctx.measureText(`${result}...`).width > maxWidth) {
-    result = result.slice(0, -1).trimEnd();
-  }
-
-  return `${result}...`;
-}
-
-function fitSubcontent(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number,
-  maxHeight: number,
-): { lines: string[]; fontSize: number; lineHeight: number } {
-  const maxLines = 4;
-
-  for (let fontSize = 30; fontSize >= 14; fontSize -= 1) {
+  for (
+    let fontSize = GRAPHIC.detail.maxFontSize;
+    fontSize >= GRAPHIC.detail.minFontSize;
+    fontSize -= 1
+  ) {
     ctx.font = `500 ${fontSize}px JetBrains Mono`;
-    const lineHeight = Math.round(fontSize * 1.35);
-    const lines = wrapText(ctx, text, maxWidth);
+    const lineHeight = Math.round(fontSize * 1.32);
 
-    if (lines.length <= maxLines && lines.length * lineHeight <= maxHeight) {
-      return { lines, fontSize, lineHeight };
+    for (const candidate of candidates) {
+      const lines = wrapText(ctx, candidate, maxWidth);
+      if (
+        lines.length <= maxLines &&
+        lines.length * lineHeight <= maxHeight
+      ) {
+        return { lines, fontSize, lineHeight };
+      }
     }
   }
 
-  const fontSize = 14;
+  const fallback = candidates[candidates.length - 1];
+  if (!fallback) return null;
+
+  const fontSize = GRAPHIC.detail.minFontSize;
   ctx.font = `500 ${fontSize}px JetBrains Mono`;
   return {
-    lines: wrapText(ctx, text, maxWidth),
+    lines: wrapText(ctx, fallback, maxWidth).slice(0, maxLines),
     fontSize,
-    lineHeight: Math.round(fontSize * 1.35),
+    lineHeight: Math.round(fontSize * 1.32),
   };
+}
+
+function drawDetailBlock(
+  ctx: CanvasRenderingContext2D,
+  layout: {
+    lines: string[];
+    fontSize: number;
+    lineHeight: number;
+  },
+  top: number,
+) {
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = `500 ${layout.fontSize}px JetBrains Mono`;
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.shadowColor = "rgba(0,0,0,0.45)";
+  ctx.shadowBlur = 12;
+  ctx.shadowOffsetY = 5;
+
+  layout.lines.forEach((line, index) => {
+    ctx.fillText(line, GRAPHIC.safeX, top + index * layout.lineHeight);
+  });
+
+  ctx.shadowColor = "transparent";
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+}
+
+function buildDetailCandidates(detail: string | null): string[] {
+  const cleaned = normalizeDetailText(detail);
+  if (!cleaned) return [];
+
+  return [cleaned];
+}
+
+function normalizeDetailText(text: string | null): string | null {
+  if (!text?.trim()) return null;
+
+  const cleaned = text
+    .replace(/^[\s:|,-]*(ano|what)\s*[:|-]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned || null;
 }
 
 function wrapText(
@@ -530,7 +648,7 @@ function wrapText(
   for (const word of words) {
     const next = current ? `${current} ${word}` : word;
 
-    if (ctx.measureText(next).width <= maxWidth || !current) {
+    if (!current || ctx.measureText(next).width <= maxWidth) {
       current = next;
       continue;
     }
@@ -539,9 +657,42 @@ function wrapText(
     current = word;
   }
 
-  if (current) {
-    lines.push(current);
+  if (current) lines.push(current);
+  return lines;
+}
+
+function trimToWidth(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+
+  let result = text;
+  while (result.length > 1 && ctx.measureText(`${result}...`).width > maxWidth) {
+    result = result.slice(0, -1).trimEnd();
   }
 
-  return lines;
+  return `${result}...`;
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function toBoldUnicode(text: string): string {
+  return Array.from(text)
+    .map((char) => {
+      const c = char.codePointAt(0)!;
+      if (c >= 65 && c <= 90) return String.fromCodePoint(0x1d5d4 + c - 65);
+      if (c >= 97 && c <= 122) return String.fromCodePoint(0x1d5ee + c - 97);
+      if (c >= 48 && c <= 57) return String.fromCodePoint(0x1d7ec + c - 48);
+      return char;
+    })
+    .join("");
 }

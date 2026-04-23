@@ -129,7 +129,7 @@ export default function ResultsCard({ data, metadata }: ResultsCardProps) {
               </p>
             )}
 
-            {/* 2-paragraph caption */}
+            {/* 3-4 paragraph caption */}
             {data.facebookCaption.split("\n\n").map((para, i) => (
               <p key={i} className="mb-3 last:mb-0">
                 {para.split("**").map((segment, j) =>
