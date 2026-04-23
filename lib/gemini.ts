@@ -12,60 +12,39 @@ const MAX_ARTICLE_CHARS = 6_000;
 function buildPrompt(articleText: string, metadata: ArticleMetadata): string {
   const truncated = truncateText(articleText, MAX_ARTICLE_CHARS);
 
-  return `You are an expert news extraction assistant.
-
-Your task is to read the article content and metadata, then extract the most important details and rewrite the article title into natural Taglish.
+  return `You are an expert news extraction assistant. Extract key information from the article and provide a Taglish summary.
 
 Rules:
-- Base your answer only on the provided article text and metadata.
-- Do not invent missing facts.
-- If a field cannot be determined, return null.
-- Return valid JSON only.
-- Keep the summary factual and concise.
-- Keep key points short and informative.
-- The Taglish title and summary must be natural, readable, and faithful to the article.
-- Avoid exaggerated or misleading clickbait.
-- For serious or sensitive topics, use a respectful tone.
+- Base answers ONLY on provided text. Do not invent facts.
+- Return null for missing fields.
+- Be concise: keep all text responses SHORT.
+- Use natural Taglish (mix English/Tagalog as Filipinos speak naturally).
 
-Taglish Guidelines (for both title and summary):
-- Mix English and Filipino (Tagalog) naturally as Filipinos speak
-- Keep it under 16 words for the title, and 2-3 sentences for summary
-- Make it sound like a real Filipino news headline and summary
-- Use natural Filipino expressions and vocabulary mixed with English
-- Do not use jejemon, forced slang, meme language, or artificial mixing
-- Do not change the factual meaning
-- If the topic is crime, disaster, death, law, or politics, keep it professional and respectful
-- Examples of natural Taglish:
-  * "May bagong law na ipapasa sa Congress ngayong buwan"
-  * "Ang sikat na celebrity ay nag-announce ng retirement sa showbiz"
-  * "Ang presyo ng gas ay tumaas ulit dahil sa international market"
-
-Return this exact JSON structure:
+Return EXACTLY this JSON (keep all text responses VERY SHORT):
 {
-  "originalTitle": "string | null",
-  "taglishTitle": "string | null (IN TAGLISH)",
-  "summary": "string | null (IN TAGLISH - 2-3 sentences)",
-  "keyPoints": ["string (IN TAGLISH)"],
-  "who": ["string"],
-  "what": "string | null (IN TAGLISH)",
-  "when": "string | null",
-  "where": ["string"],
-  "why": "string | null (IN TAGLISH)",
-  "keywords": ["string"],
-  "author": "string | null",
-  "publishedDate": "string | null",
-  "source": "string | null",
-  "facebookCaption": "string | null (2-paragraph summary in Taglish for Facebook, WITHOUT the word Bakit. Just 2 clean, short paragraphs separated by line breaks. No intro, just the summary.)"
+  "originalTitle": "string or null",
+  "taglishTitle": "short title in Taglish (max 15 words)",
+  "summary": "1-2 sentences in Taglish, concise",
+  "keyPoints": ["short point 1", "short point 2"],
+  "who": ["name or entity"],
+  "what": "what happened (1 short sentence in Taglish)",
+  "when": "date or null",
+  "where": ["location"],
+  "why": "reason (1 short sentence in Taglish)",
+  "keywords": ["word1", "word2"],
+  "author": "string or null",
+  "publishedDate": "string or null",
+  "source": "string or null",
+  "facebookCaption": "2 short paragraphs in Taglish for Facebook share"
 }
 
 Metadata:
 - Original title: ${metadata.originalTitle ?? "unknown"}
 - Author: ${metadata.author ?? "unknown"}
-- Published date: ${metadata.publishedDate ?? "unknown"}
+- Published: ${metadata.publishedDate ?? "unknown"}
 - Source: ${metadata.source ?? "unknown"}
-- URL: ${metadata.url}
 
-Article text:
+Article:
 ${truncated}`;
 }
 
@@ -128,7 +107,7 @@ export async function extractWithGemini(
     generationConfig: {
       temperature: 0.3,
       topP: 0.95,
-      maxOutputTokens: 8192,
+      maxOutputTokens: 32000,
       responseMimeType: "application/json",
     },
     safetySettings: [
@@ -161,21 +140,35 @@ export async function extractWithGemini(
 
   const rawText = response.text();
   if (!rawText) {
-    throw new Error("Gemini returned an empty response.");
+    throw new Error("Gemini returned an empty response. The article may be too short or blocked by safety filters.");
   }
 
-  // Check if JSON looks incomplete (ends prematurely)
   const trimmedText = rawText.trim();
+  console.log("[Gemini] Response length:", rawText.length);
+  console.log("[Gemini] Last 300 chars:", trimmedText.slice(-300));
+
+  // Check if JSON looks incomplete (ends prematurely)
   if (!trimmedText.endsWith("}")) {
+    console.warn("[Gemini] Incomplete response (doesn't end with }):", trimmedText.slice(-500));
     throw new Error(
-      "Gemini returned incomplete JSON response. This usually means the article is too long for the model to process completely. Try a shorter article or wait and try again.",
+      "Gemini returned incomplete JSON response. This usually means the response hit the token limit. The article may be too long.",
     );
   }
 
+  // Try parsing with detailed error info
+  try {
+    const parsed = JSON.parse(trimmedText);
+    return validateResult(parsed);
+  } catch (directErr) {
+    console.warn("[Gemini] Direct JSON.parse failed:", directErr instanceof Error ? directErr.message : directErr);
+  }
+
+  // Fallback to safeJsonParse
   const parsed = safeJsonParse<unknown>(rawText);
   if (!parsed) {
+    console.error("[Gemini] Full response that failed to parse:", rawText);
     throw new Error(
-      `Failed to parse Gemini JSON response. The response may be truncated or malformed. Please try again with a different article.`,
+      `Failed to parse Gemini JSON response. Check server logs for full response.`,
     );
   }
 

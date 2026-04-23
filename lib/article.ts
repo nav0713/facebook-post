@@ -1,5 +1,6 @@
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
+import puppeteer, { Browser } from "puppeteer";
 import type { ArticleMetadata } from "@/types/extraction";
 import { cleanArticleText, extractHostname } from "@/lib/utils";
 
@@ -8,35 +9,48 @@ export interface ParsedArticle {
   metadata: ArticleMetadata;
 }
 
-/**
- * Fetches the HTML content of a URL from the server side.
- */
-async function fetchHtml(url: string): Promise<string> {
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (compatible; NewsBot/1.0; +https://github.com/newsbot)",
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-    next: { revalidate: 0 },
+let browserInstance: Browser | null = null;
+
+async function getBrowser(): Promise<Browser> {
+  if (browserInstance) return browserInstance;
+
+  browserInstance = await puppeteer.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+    ],
   });
 
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch article: HTTP ${response.status} ${response.statusText}`
-    );
-  }
+  return browserInstance;
+}
 
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.includes("text/html")) {
-    throw new Error(
-      `Unexpected content type: ${contentType}. Expected HTML.`
-    );
-  }
+/**
+ * Fetches the HTML content of a URL using Puppeteer (handles JavaScript and bot detection).
+ */
+async function fetchHtml(url: string): Promise<string> {
+  let page = null;
 
-  return response.text();
+  try {
+    const browser = await getBrowser();
+    page = await browser.newPage();
+
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    );
+
+    await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
+    return await page.content();
+  } catch (err) {
+    throw new Error(
+      `Failed to fetch article: ${err instanceof Error ? err.message : String(err)}`
+    );
+  } finally {
+    if (page) {
+      await page.close();
+    }
+  }
 }
 
 /**
