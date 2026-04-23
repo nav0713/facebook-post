@@ -2,10 +2,8 @@
 
 import { useState } from "react";
 
-const BRAND_HANDLE = "PhViralHub";
 const CANVAS_SIZE = 1080;
-const IMAGE_HEIGHT = 648;
-const BAR_START = 980;
+const IMAGE_HEIGHT = 700;
 const SIDE_PAD = 60;
 
 interface GraphicGeneratorProps {
@@ -74,17 +72,20 @@ export default function GraphicGenerator({ imageUrl, taglishTitle, summary }: Gr
 
       // Text area background
       ctx.fillStyle = "#111111";
-      ctx.fillRect(0, IMAGE_HEIGHT, CANVAS_SIZE, BAR_START - IMAGE_HEIGHT);
+      ctx.fillRect(0, IMAGE_HEIGHT, CANVAS_SIZE, CANVAS_SIZE - IMAGE_HEIGHT);
 
-      // Logo badge (optional — loaded from /assets/logo.png)
+      // Logo badge — top right corner of the article image
       try {
         const logo = await loadImage("/assets/logo.png");
-        const logoSize = 110;
-        const logoX = (CANVAS_SIZE - logoSize) / 2;
-        const logoY = IMAGE_HEIGHT - logoSize / 2;
+        const logoSize = 120;
+        const logoPad = 20;
+        const logoX = CANVAS_SIZE - logoSize - logoPad;
+        const logoY = logoPad;
+        const logoCX = logoX + logoSize / 2;
+        const logoCY = logoY + logoSize / 2;
         ctx.save();
         ctx.beginPath();
-        ctx.arc(logoX + logoSize / 2, logoY + logoSize / 2, logoSize / 2, 0, Math.PI * 2);
+        ctx.arc(logoCX, logoCY, logoSize / 2, 0, Math.PI * 2);
         ctx.clip();
         ctx.drawImage(logo, logoX, logoY, logoSize, logoSize);
         ctx.restore();
@@ -94,24 +95,6 @@ export default function GraphicGenerator({ imageUrl, taglishTitle, summary }: Gr
 
       // Title text
       drawTitle(ctx, taglishTitle ?? "");
-
-      // Bottom bar
-      ctx.fillStyle = "#0d0d0d";
-      ctx.fillRect(0, BAR_START, CANVAS_SIZE, CANVAS_SIZE - BAR_START);
-
-      // Gold separator line
-      ctx.fillStyle = "#2a2418";
-      ctx.fillRect(0, BAR_START, CANVAS_SIZE, 2);
-
-      // Social handles
-      ctx.font = "400 32px Anton";
-      ctx.fillStyle = "#ffffff";
-      ctx.textBaseline = "middle";
-      const barMid = BAR_START + (CANVAS_SIZE - BAR_START) / 2;
-      ctx.textAlign = "left";
-      ctx.fillText(`f  ${BRAND_HANDLE}`, SIDE_PAD, barMid);
-      ctx.textAlign = "right";
-      ctx.fillText(`@${BRAND_HANDLE}`, CANVAS_SIZE - SIDE_PAD, barMid);
 
       setDataUrl(canvas.toDataURL("image/png"));
       setStatus("done");
@@ -272,8 +255,8 @@ function drawTitle(ctx: CanvasRenderingContext2D, title: string) {
   const secondWords = words.slice(splitAt);
 
   const maxWidth = CANVAS_SIZE - SIDE_PAD * 2;
-  const textAreaTop = IMAGE_HEIGHT + 60;
-  const textAreaBottom = BAR_START - 30;
+  const textAreaTop = IMAGE_HEIGHT + 50;
+  const textAreaBottom = CANVAS_SIZE - 50;
   const availableHeight = textAreaBottom - textAreaTop;
 
   const fit = fitText(ctx, firstWords, secondWords, maxWidth, availableHeight);
