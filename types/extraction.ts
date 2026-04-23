@@ -12,6 +12,7 @@ export interface ExtractionResult {
   author: string | null;
   publishedDate: string | null;
   source: string | null;
+  facebookCaption: string | null;
 }
 
 export interface ArticleMetadata {

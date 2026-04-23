@@ -3,6 +3,8 @@
 import { useState } from "react";
 import UrlForm from "@/components/url-form";
 import ResultsCard from "@/components/results-card";
+import TabSwitcher from "@/components/tab-switcher";
+import NewsAggregatorPanel from "@/components/news-aggregator-panel";
 import type { ExtractResponse, ExtractionResult, ArticleMetadata } from "@/types/extraction";
 
 type AppState =
@@ -12,7 +14,9 @@ type AppState =
   | { status: "success"; data: ExtractionResult; metadata: ArticleMetadata; url: string };
 
 export default function Home() {
+  const [activeTab, setActiveTab] = useState<"extractor" | "aggregator">("extractor");
   const [state, setState] = useState<AppState>({ status: "idle" });
+  const [pendingUrl, setPendingUrl] = useState<string | null>(null);
 
   const handleSubmit = async (url: string) => {
     setState({ status: "loading", url });
@@ -56,9 +60,9 @@ export default function Home() {
         }}
       />
 
-      <div className="relative max-w-2xl mx-auto">
+      <div className="relative max-w-5xl mx-auto">
         {/* Header */}
-        <header className="mb-12 space-y-3">
+        <header className="mb-8 space-y-3">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-[#c9a84c] flex items-center justify-center text-[#080806] text-base font-black">
               T
@@ -69,57 +73,74 @@ export default function Home() {
           </div>
 
           <h1 className="text-4xl sm:text-5xl font-black tracking-tighter leading-tight text-[#f0ede6]">
-            Article<br />
-            <span className="text-[#c9a84c]">Extractor</span>
+            News <br />
+            <span className="text-[#c9a84c]">Suite</span>
           </h1>
 
           <p className="text-[#5a5548] text-base leading-relaxed max-w-sm">
-            I-paste ang link ng balita. I-a-analyze ng AI ang artikulo at isusulat ang headline sa natural na Taglish.
+            Mag-extract at mag-i-share ng Taglish news sa Facebook. Magbrowse at pamahalaan ng RSS feeds.
           </p>
         </header>
 
-        {/* Form */}
-        <div className="mb-8">
-          <UrlForm
-            onSubmit={handleSubmit}
-            isLoading={state.status === "loading"}
-          />
-        </div>
+        {/* Tab switcher */}
+        <TabSwitcher activeTab={activeTab} onTabChange={setActiveTab} />
 
-        {/* Loading state */}
-        {state.status === "loading" && (
-          <LoadingState url={state.url} />
-        )}
+        {/* Article Extractor Tab */}
+        {activeTab === "extractor" && (
+          <div className="max-w-2xl space-y-8">
+            {/* Form */}
+            <UrlForm
+              onSubmit={handleSubmit}
+              isLoading={state.status === "loading"}
+              initialUrl={pendingUrl ?? undefined}
+              onInitialUrlConsumed={() => setPendingUrl(null)}
+            />
 
-        {/* Error state */}
-        {state.status === "error" && (
-          <ErrorState message={state.message} onReset={handleReset} />
-        )}
+            {/* Loading state */}
+            {state.status === "loading" && <LoadingState url={state.url} />}
 
-        {/* Success state */}
-        {state.status === "success" && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-[#4a4740] text-xs font-mono truncate max-w-[70%]">
-                ↳ {state.url}
+            {/* Error state */}
+            {state.status === "error" && (
+              <ErrorState message={state.message} onReset={handleReset} />
+            )}
+
+            {/* Success state */}
+            {state.status === "success" && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-[#4a4740] text-xs font-mono truncate max-w-[70%]">
+                    ↳ {state.url}
+                  </p>
+                  <button
+                    onClick={handleReset}
+                    className="text-xs text-[#c9a84c] hover:text-[#e0be6a] transition-colors"
+                  >
+                    ← Try another
+                  </button>
+                </div>
+                <ResultsCard data={state.data} metadata={state.metadata} />
+              </div>
+            )}
+
+            {/* Footer */}
+            <footer className="pt-6 border-t border-[#1a1810] text-center">
+              <p className="text-[#3a3730] text-xs font-mono">
+                Powered by Gemini 1.5 Pro · Next.js 14 App Router
               </p>
-              <button
-                onClick={handleReset}
-                className="text-xs text-[#c9a84c] hover:text-[#e0be6a] transition-colors"
-              >
-                ← Try another
-              </button>
-            </div>
-            <ResultsCard data={state.data} metadata={state.metadata} />
+            </footer>
           </div>
         )}
 
-        {/* Footer */}
-        <footer className="mt-16 pt-6 border-t border-[#1a1810] text-center">
-          <p className="text-[#3a3730] text-xs font-mono">
-            Powered by Gemini 1.5 Pro · Next.js 14 App Router
-          </p>
-        </footer>
+        {/* News Aggregator Tab */}
+        {activeTab === "aggregator" && (
+          <NewsAggregatorPanel
+            onArticleSelect={(url) => {
+              setPendingUrl(url);
+              setActiveTab("extractor");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+          />
+        )}
       </div>
     </main>
   );

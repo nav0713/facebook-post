@@ -7,7 +7,7 @@ import type { ArticleMetadata } from "@/types/extraction";
 import type { ExtractionResult } from "@/types/extraction";
 import { truncateText, safeJsonParse } from "@/lib/utils";
 
-const MAX_ARTICLE_CHARS = 12_000;
+const MAX_ARTICLE_CHARS = 6_000;
 
 function buildPrompt(articleText: string, metadata: ArticleMetadata): string {
   const truncated = truncateText(articleText, MAX_ARTICLE_CHARS);
@@ -23,33 +23,39 @@ Rules:
 - Return valid JSON only.
 - Keep the summary factual and concise.
 - Keep key points short and informative.
-- The Taglish title must be natural, readable, and faithful to the article.
+- The Taglish title and summary must be natural, readable, and faithful to the article.
 - Avoid exaggerated or misleading clickbait.
 - For serious or sensitive topics, use a respectful tone.
 
-Rewrite the article title into Taglish using these rules:
-- Keep it under 16 words if possible
-- Make it sound like a real Filipino news/social headline
-- Mix English and Filipino naturally
-- Do not use jejemon, forced slang, or meme language
+Taglish Guidelines (for both title and summary):
+- Mix English and Filipino (Tagalog) naturally as Filipinos speak
+- Keep it under 16 words for the title, and 2-3 sentences for summary
+- Make it sound like a real Filipino news headline and summary
+- Use natural Filipino expressions and vocabulary mixed with English
+- Do not use jejemon, forced slang, meme language, or artificial mixing
 - Do not change the factual meaning
 - If the topic is crime, disaster, death, law, or politics, keep it professional and respectful
+- Examples of natural Taglish:
+  * "May bagong law na ipapasa sa Congress ngayong buwan"
+  * "Ang sikat na celebrity ay nag-announce ng retirement sa showbiz"
+  * "Ang presyo ng gas ay tumaas ulit dahil sa international market"
 
 Return this exact JSON structure:
 {
   "originalTitle": "string | null",
-  "taglishTitle": "string | null",
-  "summary": "string | null",
-  "keyPoints": ["string"],
+  "taglishTitle": "string | null (IN TAGLISH)",
+  "summary": "string | null (IN TAGLISH - 2-3 sentences)",
+  "keyPoints": ["string (IN TAGLISH)"],
   "who": ["string"],
-  "what": "string | null",
+  "what": "string | null (IN TAGLISH)",
   "when": "string | null",
   "where": ["string"],
-  "why": "string | null",
+  "why": "string | null (IN TAGLISH)",
   "keywords": ["string"],
   "author": "string | null",
   "publishedDate": "string | null",
-  "source": "string | null"
+  "source": "string | null",
+  "facebookCaption": "string | null (2-paragraph summary in Taglish for Facebook, WITHOUT the word Bakit. Just 2 clean, short paragraphs separated by line breaks. No intro, just the summary.)"
 }
 
 Metadata:
@@ -100,6 +106,7 @@ function validateResult(raw: unknown): ExtractionResult {
     author: getString("author"),
     publishedDate: getString("publishedDate"),
     source: getString("source"),
+    facebookCaption: getString("facebookCaption"),
   };
 }
 
@@ -121,7 +128,7 @@ export async function extractWithGemini(
     generationConfig: {
       temperature: 0.3,
       topP: 0.95,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 8192,
       responseMimeType: "application/json",
     },
     safetySettings: [
@@ -157,10 +164,18 @@ export async function extractWithGemini(
     throw new Error("Gemini returned an empty response.");
   }
 
+  // Check if JSON looks incomplete (ends prematurely)
+  const trimmedText = rawText.trim();
+  if (!trimmedText.endsWith("}")) {
+    throw new Error(
+      "Gemini returned incomplete JSON response. This usually means the article is too long for the model to process completely. Try a shorter article or wait and try again.",
+    );
+  }
+
   const parsed = safeJsonParse<unknown>(rawText);
   if (!parsed) {
     throw new Error(
-      `Failed to parse Gemini JSON response. Raw output: ${rawText.slice(0, 300)}`,
+      `Failed to parse Gemini JSON response. The response may be truncated or malformed. Please try again with a different article.`,
     );
   }
 

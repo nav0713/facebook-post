@@ -132,7 +132,8 @@ export default function GraphicGenerator({ imageUrl, taglishTitle, summary }: Gr
     if (!dataUrl) return;
     setPostStatus("posting");
     setPostError(null);
-    const caption = [taglishTitle, summary].filter(Boolean).join("\n\n");
+    const titlePart = taglishTitle ? `**${taglishTitle}**` : null;
+    const caption = [titlePart, summary].filter(Boolean).join("\n\n");
     try {
       const res = await fetch("/api/post-to-facebook", {
         method: "POST",

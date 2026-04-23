@@ -54,8 +54,40 @@ export default function ResultsCard({ data, metadata }: ResultsCardProps) {
         </div>
       </div>
 
-      {/* Summary */}
-      {data.summary && (
+      {/* Facebook Caption - Main Content */}
+      {data.facebookCaption && (
+        <div className="rounded-2xl border border-[#c9a84c]/50 bg-[#0b0b08] p-6 space-y-3">
+          <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-[#c9a84c]">
+            Facebook Caption
+          </span>
+          <div className="text-[#c5c0b4] text-sm leading-relaxed prose prose-invert max-w-none">
+            {/* Title in bold */}
+            {data.taglishTitle && (
+              <p className="mb-4 text-[#f0ede6] font-bold">
+                <strong>{data.taglishTitle}</strong>
+              </p>
+            )}
+
+            {/* 2-paragraph caption */}
+            {data.facebookCaption.split("\n\n").map((para, i) => (
+              <p key={i} className="mb-3 last:mb-0">
+                {para.split("**").map((segment, j) =>
+                  j % 2 === 0 ? (
+                    segment
+                  ) : (
+                    <strong key={j} className="text-[#f0ede6] font-bold">
+                      {segment}
+                    </strong>
+                  )
+                )}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Summary (Secondary) */}
+      {data.summary && !data.facebookCaption && (
         <Section label="Buod (Summary)">
           <p className="text-[#c5c0b4] text-sm leading-relaxed">{data.summary}</p>
         </Section>
@@ -108,7 +140,7 @@ export default function ResultsCard({ data, metadata }: ResultsCardProps) {
       <GraphicGenerator
         imageUrl={metadata.featuredImage}
         taglishTitle={data.taglishTitle}
-        summary={data.summary}
+        summary={data.facebookCaption || data.summary}
       />
     </div>
   );
