@@ -9,6 +9,7 @@ export interface ExtractionResult {
   where: string[];
   why: string | null;
   keywords: string[];
+  hashtags: string[];
   author: string | null;
   publishedDate: string | null;
   source: string | null;

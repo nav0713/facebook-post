@@ -141,6 +141,7 @@ export default function ResultsCard({ data, metadata }: ResultsCardProps) {
         imageUrl={metadata.featuredImage}
         taglishTitle={data.taglishTitle}
         summary={data.facebookCaption || data.summary}
+        hashtags={data.hashtags}
       />
     </div>
   );

@@ -19,6 +19,7 @@ Rules:
 - Return null for missing fields.
 - Be concise: keep all text responses SHORT.
 - Use natural Taglish (mix English/Tagalog as Filipinos speak naturally).
+- "hashtags": 5–8 relevant hashtags in English or Filipino, each starting with #.
 
 Return EXACTLY this JSON (keep all text responses VERY SHORT):
 {
@@ -32,6 +33,7 @@ Return EXACTLY this JSON (keep all text responses VERY SHORT):
   "where": ["location"],
   "why": "reason (1 short sentence in Taglish)",
   "keywords": ["word1", "word2"],
+  "hashtags": ["#Tag1", "#Tag2"],
   "author": "string or null",
   "publishedDate": "string or null",
   "source": "string or null",
@@ -82,6 +84,7 @@ function validateResult(raw: unknown): ExtractionResult {
     where: getStringArray("where"),
     why: getString("why"),
     keywords: getStringArray("keywords"),
+    hashtags: getStringArray("hashtags"),
     author: getString("author"),
     publishedDate: getString("publishedDate"),
     source: getString("source"),

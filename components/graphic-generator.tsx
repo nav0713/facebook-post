@@ -10,12 +10,13 @@ interface GraphicGeneratorProps {
   imageUrl: string | null;
   taglishTitle: string | null;
   summary: string | null;
+  hashtags: string[];
 }
 
 type Status = "idle" | "generating" | "done" | "error";
 type PostStatus = "idle" | "posting" | "posted" | "post-error";
 
-export default function GraphicGenerator({ imageUrl, taglishTitle, summary }: GraphicGeneratorProps) {
+export default function GraphicGenerator({ imageUrl, taglishTitle, summary, hashtags }: GraphicGeneratorProps) {
   const [status, setStatus] = useState<Status>("idle");
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [postStatus, setPostStatus] = useState<PostStatus>("idle");
@@ -115,8 +116,9 @@ export default function GraphicGenerator({ imageUrl, taglishTitle, summary }: Gr
     if (!dataUrl) return;
     setPostStatus("posting");
     setPostError(null);
-    const titlePart = taglishTitle ? `**${taglishTitle}**` : null;
-    const caption = [titlePart, summary].filter(Boolean).join("\n\n");
+    const titlePart = taglishTitle ? toBoldUnicode(taglishTitle) : null;
+    const hashtagLine = hashtags.length > 0 ? hashtags.join(" ") : null;
+    const caption = [titlePart, summary, hashtagLine].filter(Boolean).join("\n\n");
     try {
       const res = await fetch("/api/post-to-facebook", {
         method: "POST",
@@ -235,6 +237,16 @@ export default function GraphicGenerator({ imageUrl, taglishTitle, summary }: Gr
       )}
     </div>
   );
+}
+
+function toBoldUnicode(text: string): string {
+  return Array.from(text).map((char) => {
+    const c = char.codePointAt(0)!;
+    if (c >= 65 && c <= 90) return String.fromCodePoint(0x1d5d4 + c - 65);  // A-Z
+    if (c >= 97 && c <= 122) return String.fromCodePoint(0x1d5ee + c - 97); // a-z
+    if (c >= 48 && c <= 57) return String.fromCodePoint(0x1d7ec + c - 48);  // 0-9
+    return char;
+  }).join("");
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
