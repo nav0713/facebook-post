@@ -1,6 +1,11 @@
 "use client";
 
-import type { ExtractionResult, ArticleMetadata } from "@/types/extraction";
+import { useEffect, useState } from "react";
+import type {
+  ExtractionResult,
+  ArticleMetadata,
+  RefreshTitleResponse,
+} from "@/types/extraction";
 import GraphicGenerator from "@/components/graphic-generator";
 
 interface ResultsCardProps {
@@ -8,7 +13,50 @@ interface ResultsCardProps {
   metadata: ArticleMetadata;
 }
 
+type RefreshStatus = "idle" | "refreshing" | "error";
+
 export default function ResultsCard({ data, metadata }: ResultsCardProps) {
+  const [taglishTitle, setTaglishTitle] = useState(data.taglishTitle);
+  const [refreshStatus, setRefreshStatus] = useState<RefreshStatus>("idle");
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTaglishTitle(data.taglishTitle);
+    setRefreshStatus("idle");
+    setRefreshError(null);
+  }, [data.taglishTitle, metadata.url]);
+
+  const refreshTitle = async () => {
+    setRefreshStatus("refreshing");
+    setRefreshError(null);
+
+    try {
+      const res = await fetch("/api/title/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          data,
+          metadata,
+          currentTitle: taglishTitle,
+        }),
+      });
+
+      const json = await res.json() as RefreshTitleResponse;
+
+      if (!json.success) {
+        setRefreshError(json.error);
+        setRefreshStatus("error");
+        return;
+      }
+
+      setTaglishTitle(json.taglishTitle);
+      setRefreshStatus("idle");
+    } catch {
+      setRefreshError("Hindi makakuha ng bagong title.");
+      setRefreshStatus("error");
+    }
+  };
+
   return (
     <div className="w-full space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
@@ -37,13 +85,26 @@ export default function ResultsCard({ data, metadata }: ResultsCardProps) {
           </p>
         </div>
 
-        <div className="space-y-1">
-          <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-[#c9a84c]">
-            Taglish Title
-          </span>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-[#c9a84c]">
+              Taglish Title
+            </span>
+            <button
+              type="button"
+              onClick={refreshTitle}
+              disabled={refreshStatus === "refreshing"}
+              className="shrink-0 px-3 py-1.5 rounded-lg border border-[#2e2b1e] text-[11px] font-mono text-[#c9a84c] hover:text-[#f0ede6] hover:border-[#c9a84c]/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {refreshStatus === "refreshing" ? "Refreshing..." : "Refresh title"}
+            </button>
+          </div>
           <h2 className="text-[#f0ede6] text-2xl font-bold leading-tight tracking-tight">
-            {data.taglishTitle ?? "Hindi makuha ang pamagat"}
+            {taglishTitle ?? "Hindi makuha ang pamagat"}
           </h2>
+          {refreshStatus === "error" && refreshError && (
+            <p className="text-red-400 text-xs font-mono">{refreshError}</p>
+          )}
         </div>
 
         {/* Byline */}
@@ -54,8 +115,40 @@ export default function ResultsCard({ data, metadata }: ResultsCardProps) {
         </div>
       </div>
 
-      {/* Summary */}
-      {data.summary && (
+      {/* Facebook Caption - Main Content */}
+      {data.facebookCaption && (
+        <div className="rounded-2xl border border-[#c9a84c]/50 bg-[#0b0b08] p-6 space-y-3">
+          <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-[#c9a84c]">
+            Facebook Caption
+          </span>
+          <div className="text-[#c5c0b4] text-sm leading-relaxed prose prose-invert max-w-none">
+            {/* Title in bold */}
+            {taglishTitle && (
+              <p className="mb-4 text-[#f0ede6] font-bold">
+                <strong>{taglishTitle}</strong>
+              </p>
+            )}
+
+            {/* 3-4 paragraph caption */}
+            {data.facebookCaption.split("\n\n").map((para, i) => (
+              <p key={i} className="mb-3 last:mb-0">
+                {para.split("**").map((segment, j) =>
+                  j % 2 === 0 ? (
+                    segment
+                  ) : (
+                    <strong key={j} className="text-[#f0ede6] font-bold">
+                      {segment}
+                    </strong>
+                  )
+                )}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Summary (Secondary) */}
+      {data.summary && !data.facebookCaption && (
         <Section label="Buod (Summary)">
           <p className="text-[#c5c0b4] text-sm leading-relaxed">{data.summary}</p>
         </Section>
@@ -107,8 +200,10 @@ export default function ResultsCard({ data, metadata }: ResultsCardProps) {
       {/* Graphic Generator */}
       <GraphicGenerator
         imageUrl={metadata.featuredImage}
-        taglishTitle={data.taglishTitle}
-        summary={data.summary}
+        taglishTitle={taglishTitle}
+        what={data.what}
+        summary={data.facebookCaption || data.summary}
+        hashtags={data.hashtags}
       />
     </div>
   );

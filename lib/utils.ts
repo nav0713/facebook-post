@@ -1,4 +1,20 @@
 /**
+ * Strips common tracking query params (utm_*, fbclid, ref) so the same
+ * article URL always maps to the same cache key regardless of referral source.
+ */
+export function normalizeUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "fbclid", "ref"].forEach(
+      (p) => u.searchParams.delete(p),
+    );
+    return u.toString();
+  } catch {
+    return raw;
+  }
+}
+
+/**
  * Validates whether a given string is a well-formed HTTP/HTTPS URL.
  */
 export function isValidUrl(value: string): boolean {

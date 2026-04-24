@@ -1,5 +1,6 @@
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
+import puppeteer, { Browser } from "puppeteer";
 import type { ArticleMetadata } from "@/types/extraction";
 import { cleanArticleText, extractHostname } from "@/lib/utils";
 
@@ -8,35 +9,159 @@ export interface ParsedArticle {
   metadata: ArticleMetadata;
 }
 
-/**
- * Fetches the HTML content of a URL from the server side.
- */
-async function fetchHtml(url: string): Promise<string> {
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (compatible; NewsBot/1.0; +https://github.com/newsbot)",
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-    next: { revalidate: 0 },
+let browserInstance: Browser | null = null;
+
+interface FetchCandidate {
+  url: string;
+  userAgent: string;
+  isMobile?: boolean;
+}
+
+const DESKTOP_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+const MOBILE_USER_AGENT =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+
+async function getBrowser(): Promise<Browser> {
+  if (browserInstance) return browserInstance;
+
+  browserInstance = await puppeteer.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+    ],
   });
 
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch article: HTTP ${response.status} ${response.statusText}`
-    );
+  return browserInstance;
+}
+
+/**
+ * Fetches the HTML content of a URL using Puppeteer (handles JavaScript and bot detection).
+ */
+async function fetchHtml(url: string): Promise<string> {
+  const candidates = buildFetchCandidates(url);
+  let lastError: Error | null = null;
+
+  for (const candidate of candidates) {
+    try {
+      const html = await fetchHtmlCandidate(candidate);
+      if (!isAccessDeniedHtml(html)) {
+        return html;
+      }
+      lastError = new Error("The site returned an access denied page.");
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
   }
 
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.includes("text/html")) {
+  throw new Error(
+    `Failed to fetch article: ${lastError?.message ?? "all fetch attempts failed"}`
+  );
+}
+
+async function fetchHtmlCandidate(candidate: FetchCandidate): Promise<string> {
+  let page = null;
+
+  try {
+    const browser = await getBrowser();
+    page = await browser.newPage();
+
+    await page.setUserAgent(candidate.userAgent);
+    if (candidate.isMobile) {
+      await page.setViewport({
+        width: 390,
+        height: 844,
+        isMobile: true,
+        hasTouch: true,
+      });
+    }
+    await page.setExtraHTTPHeaders({
+      "Accept-Language": "en-US,en;q=0.9,fil;q=0.8",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    });
+
+    // Block images/media/fonts — we only need HTML text and meta tags
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      const type = req.resourceType();
+      if (["image", "media", "font", "stylesheet"].includes(type)) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
+
+    const response = await page.goto(candidate.url, {
+      waitUntil: "domcontentloaded",
+      timeout: 45000,
+    });
+    const html = await page.content();
+
+    if (response?.status() === 403 || isAccessDeniedHtml(html)) {
+      throw new Error(`Access denied while fetching ${candidate.url}`);
+    }
+
+    return html;
+  } catch (err) {
     throw new Error(
-      `Unexpected content type: ${contentType}. Expected HTML.`
+      `Failed to fetch article: ${err instanceof Error ? err.message : String(err)}`
     );
+  } finally {
+    if (page) {
+      await page.close();
+    }
+  }
+}
+
+function buildFetchCandidates(url: string): FetchCandidate[] {
+  const candidates: FetchCandidate[] = [
+    { url, userAgent: DESKTOP_USER_AGENT },
+  ];
+
+  try {
+    const parsed = new URL(url);
+
+    if (!parsed.searchParams.has("amp")) {
+      const amp = new URL(parsed);
+      amp.searchParams.set("amp", "");
+      candidates.push({
+        url: amp.toString(),
+        userAgent: MOBILE_USER_AGENT,
+        isMobile: true,
+      });
+    }
+
+    if (!parsed.searchParams.has("output")) {
+      const output = new URL(parsed);
+      output.searchParams.set("output", "1");
+      candidates.push({
+        url: output.toString(),
+        userAgent: MOBILE_USER_AGENT,
+        isMobile: true,
+      });
+    }
+  } catch {
+    // The caller validates URLs before this point; keep original candidate only.
   }
 
-  return response.text();
+  return candidates.filter(
+    (candidate, index, list) =>
+      list.findIndex((item) => item.url === candidate.url) === index
+  );
+}
+
+function isAccessDeniedHtml(html: string): boolean {
+  const lowered = html.slice(0, 5000).toLowerCase();
+  return (
+    lowered.includes("<title>403") ||
+    lowered.includes("403 - forbidden") ||
+    lowered.includes("access denied") ||
+    lowered.includes("request forbidden")
+  );
 }
 
 /**

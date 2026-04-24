@@ -1,16 +1,27 @@
 "use client";
 
-import { useState, FormEvent } from "react";
+import { useState, FormEvent, useEffect } from "react";
 import { isValidUrl } from "@/lib/utils";
 
 interface UrlFormProps {
   onSubmit: (url: string) => void;
   isLoading: boolean;
+  initialUrl?: string;
+  onInitialUrlConsumed?: () => void;
 }
 
-export default function UrlForm({ onSubmit, isLoading }: UrlFormProps) {
+export default function UrlForm({ onSubmit, isLoading, initialUrl, onInitialUrlConsumed }: UrlFormProps) {
   const [url, setUrl] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Auto-fill and submit when initialUrl is set (from news feed click)
+  useEffect(() => {
+    if (initialUrl && isValidUrl(initialUrl)) {
+      setUrl(initialUrl);
+      onSubmit(initialUrl);
+      onInitialUrlConsumed?.();
+    }
+  }, [initialUrl]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();

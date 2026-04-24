@@ -15,16 +15,29 @@ export async function POST(req: NextRequest) {
 
   let imageDataUrl: string;
   let caption: string;
+  let scheduledPublishTime: number | undefined;
   try {
     const body = await req.json();
     imageDataUrl = body.imageDataUrl;
     caption = body.caption ?? "";
+    scheduledPublishTime = body.scheduledPublishTime ?? undefined;
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
   if (!imageDataUrl?.startsWith("data:image/")) {
     return NextResponse.json({ error: "Invalid image data" }, { status: 400 });
+  }
+
+  if (scheduledPublishTime !== undefined) {
+    const tenMinutesFromNow = Math.floor(Date.now() / 1000) + 10 * 60;
+    const thirtyDaysFromNow = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+    if (scheduledPublishTime < tenMinutesFromNow || scheduledPublishTime > thirtyDaysFromNow) {
+      return NextResponse.json(
+        { error: "Scheduled time must be between 10 minutes and 30 days from now." },
+        { status: 400 }
+      );
+    }
   }
 
   // Decode base64 data URL → Buffer
@@ -36,6 +49,10 @@ export async function POST(req: NextRequest) {
   formData.append("source", new Blob([buffer], { type: "image/png" }), "post-graphic.png");
   formData.append("message", caption);
   formData.append("access_token", accessToken);
+  if (scheduledPublishTime !== undefined) {
+    formData.append("published", "false");
+    formData.append("scheduled_publish_time", String(scheduledPublishTime));
+  }
 
   try {
     const res = await fetch(`${GRAPH_API}/${pageId}/photos`, {
