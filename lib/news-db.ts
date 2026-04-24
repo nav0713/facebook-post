@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import { SEED_SOURCES } from "./news-seed";
+import type { ExtractionResult } from "@/types/extraction";
 
 const DB_PATH = path.join(process.cwd(), "data", "news.db");
 
@@ -53,6 +54,14 @@ function initSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at DESC);
     CREATE INDEX IF NOT EXISTS idx_articles_source_id ON articles(source_id);
+
+    CREATE TABLE IF NOT EXISTS extraction_cache (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      url TEXT NOT NULL UNIQUE,
+      result_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_extraction_cache_url ON extraction_cache(url);
   `);
 }
 
@@ -65,4 +74,22 @@ function seedSources(db: Database.Database): void {
   for (const source of SEED_SOURCES) {
     stmt.run(source.name, source.url, source.category, source.type);
   }
+}
+
+export function getCachedExtraction(url: string): ExtractionResult | null {
+  const row = getDb()
+    .prepare("SELECT result_json FROM extraction_cache WHERE url = ?")
+    .get(url) as { result_json: string } | undefined;
+  if (!row) return null;
+  try {
+    return JSON.parse(row.result_json) as ExtractionResult;
+  } catch {
+    return null;
+  }
+}
+
+export function setCachedExtraction(url: string, result: ExtractionResult): void {
+  getDb()
+    .prepare("INSERT OR REPLACE INTO extraction_cache (url, result_json) VALUES (?, ?)")
+    .run(url, JSON.stringify(result));
 }

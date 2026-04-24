@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseArticle } from "@/lib/article";
 import { extractWithGemini } from "@/lib/gemini";
-import { isValidUrl } from "@/lib/utils";
+import { isValidUrl, normalizeUrl } from "@/lib/utils";
+import { getCachedExtraction, setCachedExtraction } from "@/lib/news-db";
 import type { ExtractResponse } from "@/types/extraction";
 
 export const runtime = "nodejs";
@@ -37,14 +38,31 @@ export async function POST(req: NextRequest): Promise<NextResponse<ExtractRespon
   }
 
   try {
+    const cacheKey = normalizeUrl(url);
     const { text, metadata } = await parseArticle(url);
+
+    const cached = getCachedExtraction(cacheKey);
+    if (cached) {
+      // Backfill metadata fields (always use fresh scrape for accuracy)
+      cached.originalTitle = metadata.originalTitle ?? cached.originalTitle;
+      cached.author        = metadata.author        ?? cached.author;
+      cached.publishedDate = metadata.publishedDate ?? cached.publishedDate;
+      cached.source        = metadata.source        ?? cached.source;
+      console.log("[/api/extract] Cache hit for:", cacheKey);
+      return NextResponse.json({ success: true, data: cached, metadata });
+    }
+
     const extraction = await extractWithGemini(text, metadata);
 
-    return NextResponse.json({
-      success: true,
-      data: extraction,
-      metadata,
-    });
+    // Backfill metadata fields the model no longer generates
+    extraction.originalTitle = metadata.originalTitle ?? extraction.originalTitle;
+    extraction.author        = metadata.author        ?? extraction.author;
+    extraction.publishedDate = metadata.publishedDate ?? extraction.publishedDate;
+    extraction.source        = metadata.source        ?? extraction.source;
+
+    setCachedExtraction(cacheKey, extraction);
+
+    return NextResponse.json({ success: true, data: extraction, metadata });
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "An unexpected error occurred.";

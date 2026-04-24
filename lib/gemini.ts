@@ -32,7 +32,6 @@ Rules:
 
 Return EXACTLY this JSON:
 {
-  "originalTitle": "string or null",
   "taglishTitle": "concise high-impact title in Taglish (max 10 words)",
   "summary": "informative Taglish summary, around 3-5 sentences, with important details intact",
   "keyPoints": ["short point 1", "short point 2"],
@@ -43,9 +42,6 @@ Return EXACTLY this JSON:
   "why": "reason (1 short sentence in Taglish)",
   "keywords": ["word1", "word2"],
   "hashtags": ["#Tag1", "#Tag2"],
-  "author": "string or null",
-  "publishedDate": "string or null",
-  "source": "string or null",
   "facebookCaption": "3-4 paragraphs max in Taglish for Facebook share, informative and detailed"
 }
 
@@ -83,7 +79,7 @@ function validateResult(raw: unknown): ExtractionResult {
   };
 
   return {
-    originalTitle: getString("originalTitle"),
+    originalTitle: null,
     taglishTitle: getString("taglishTitle"),
     summary: getString("summary"),
     keyPoints: getStringArray("keyPoints"),
@@ -94,9 +90,9 @@ function validateResult(raw: unknown): ExtractionResult {
     why: getString("why"),
     keywords: getStringArray("keywords"),
     hashtags: getStringArray("hashtags"),
-    author: getString("author"),
-    publishedDate: getString("publishedDate"),
-    source: getString("source"),
+    author: null,
+    publishedDate: null,
+    source: null,
     facebookCaption: getString("facebookCaption"),
   };
 }
@@ -119,7 +115,7 @@ export async function extractWithGemini(
     generationConfig: {
       temperature: 0.3,
       topP: 0.95,
-      maxOutputTokens: 32000,
+      maxOutputTokens: 4096,
       responseMimeType: "application/json",
     },
     safetySettings: [
@@ -231,7 +227,6 @@ export async function generateAlternateTitleWithGemini({
   const context = {
     anchorTitle: metadata.originalTitle ?? extraction.originalTitle,
     currentTitle,
-    summary: extraction.summary,
     what: sanitizeTitleContext(extraction.what),
     who: extraction.who,
     where: extraction.where,
