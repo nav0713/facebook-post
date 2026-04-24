@@ -54,7 +54,7 @@ interface GraphicAssets {
 }
 
 type Status = "idle" | "generating" | "done" | "error";
-type PostStatus = "idle" | "posting" | "posted" | "post-error";
+type PostStatus = "idle" | "choosing" | "scheduling" | "posting" | "posted" | "scheduled" | "post-error";
 
 export default function GraphicGenerator({
   imageUrl,
@@ -67,6 +67,7 @@ export default function GraphicGenerator({
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [postStatus, setPostStatus] = useState<PostStatus>("idle");
   const [postError, setPostError] = useState<string | null>(null);
+  const [scheduleTime, setScheduleTime] = useState<string>("");
 
   const generate = async () => {
     setStatus("generating");
@@ -107,20 +108,22 @@ export default function GraphicGenerator({
     a.click();
   };
 
+  const buildCaption = () => {
+    const titlePart = taglishTitle ? toBoldUnicode(taglishTitle) : null;
+    const hashtagLine = hashtags.length > 0 ? hashtags.join(" ") : null;
+    return [titlePart, summary, hashtagLine].filter(Boolean).join("\n\n");
+  };
+
   const postToFacebook = async () => {
     if (!dataUrl) return;
     setPostStatus("posting");
     setPostError(null);
 
-    const titlePart = taglishTitle ? toBoldUnicode(taglishTitle) : null;
-    const hashtagLine = hashtags.length > 0 ? hashtags.join(" ") : null;
-    const caption = [titlePart, summary, hashtagLine].filter(Boolean).join("\n\n");
-
     try {
       const res = await fetch("/api/post-to-facebook", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageDataUrl: dataUrl, caption }),
+        body: JSON.stringify({ imageDataUrl: dataUrl, caption: buildCaption() }),
       });
 
       const json = await res.json() as { success?: boolean; error?: string };
@@ -129,6 +132,37 @@ export default function GraphicGenerator({
         setPostStatus("post-error");
       } else {
         setPostStatus("posted");
+      }
+    } catch {
+      setPostError("Hindi ma-reach ang server.");
+      setPostStatus("post-error");
+    }
+  };
+
+  const schedulePost = async () => {
+    if (!dataUrl || !scheduleTime) return;
+    setPostStatus("posting");
+    setPostError(null);
+
+    const scheduledUnix = Math.floor(new Date(scheduleTime).getTime() / 1000);
+
+    try {
+      const res = await fetch("/api/post-to-facebook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl: dataUrl,
+          caption: buildCaption(),
+          scheduledPublishTime: scheduledUnix,
+        }),
+      });
+
+      const json = await res.json() as { success?: boolean; error?: string };
+      if (!res.ok || !json.success) {
+        setPostError(json.error ?? "May nangyaring mali.");
+        setPostStatus("post-error");
+      } else {
+        setPostStatus("scheduled");
       }
     } catch {
       setPostError("Hindi ma-reach ang server.");
@@ -190,6 +224,7 @@ export default function GraphicGenerator({
                 setStatus("idle");
                 setDataUrl(null);
                 setPostStatus("idle");
+                setScheduleTime("");
               }}
               className="px-4 py-3 rounded-xl border border-[#2e2b1e] text-[#7a7468] text-sm hover:text-[#c5c0b4] transition-colors"
             >
@@ -198,26 +233,95 @@ export default function GraphicGenerator({
           </div>
 
           <div className="pt-1 border-t border-[#1e1c14] space-y-2">
-            {postStatus !== "posted" && (
+            {postStatus === "idle" && (
               <button
-                onClick={postToFacebook}
-                disabled={postStatus === "posting"}
-                className="w-full py-3 rounded-xl bg-[#1877f2] text-white font-bold text-sm tracking-wide hover:bg-[#1565d8] disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                onClick={() => setPostStatus("choosing")}
+                className="w-full py-3 rounded-xl bg-[#1877f2] text-white font-bold text-sm tracking-wide hover:bg-[#1565d8] transition-colors"
               >
-                {postStatus === "posting" ? (
-                  <>
-                    <span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
-                    Nipo-post…
-                  </>
-                ) : (
-                  "I-post sa Facebook"
-                )}
+                I-post sa Facebook
               </button>
+            )}
+
+            {postStatus === "choosing" && (
+              <div className="space-y-2">
+                <p className="text-[#7a7468] text-xs font-mono text-center">Kailan i-po-post?</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={postToFacebook}
+                    className="flex-1 py-3 rounded-xl bg-[#1877f2] text-white font-bold text-sm hover:bg-[#1565d8] transition-colors"
+                  >
+                    Post Now
+                  </button>
+                  <button
+                    onClick={() => {
+                      const now = new Date();
+                      now.setMinutes(now.getMinutes() + 10);
+                      setScheduleTime(now.toISOString().slice(0, 16));
+                      setPostStatus("scheduling");
+                    }}
+                    className="flex-1 py-3 rounded-xl border border-[#1877f2] text-[#1877f2] font-bold text-sm hover:bg-[#1877f2]/10 transition-colors"
+                  >
+                    Schedule
+                  </button>
+                </div>
+                <button
+                  onClick={() => setPostStatus("idle")}
+                  className="w-full text-xs text-[#5a5548] hover:text-[#c5c0b4] transition-colors py-1"
+                >
+                  Kanselahin
+                </button>
+              </div>
+            )}
+
+            {postStatus === "scheduling" && (
+              <div className="space-y-3">
+                <p className="text-[#7a7468] text-xs font-mono">Piliin ang oras ng pag-post:</p>
+                <input
+                  type="datetime-local"
+                  value={scheduleTime}
+                  min={new Date(Date.now() + 10 * 60 * 1000).toISOString().slice(0, 16)}
+                  onChange={(e) => setScheduleTime(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-[#1a1810] border border-[#2e2b1e] text-[#c5c0b4] text-sm font-mono focus:outline-none focus:border-[#1877f2]"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={schedulePost}
+                    disabled={!scheduleTime}
+                    className="flex-1 py-3 rounded-xl bg-[#1877f2] text-white font-bold text-sm hover:bg-[#1565d8] disabled:opacity-50 transition-colors"
+                  >
+                    I-schedule
+                  </button>
+                  <button
+                    onClick={() => setPostStatus("choosing")}
+                    className="px-4 py-3 rounded-xl border border-[#2e2b1e] text-[#7a7468] text-sm hover:text-[#c5c0b4] transition-colors"
+                  >
+                    Bumalik
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {postStatus === "posting" && (
+              <div className="flex items-center justify-center gap-2 py-3 text-[#7a7468] text-sm font-mono">
+                <span className="animate-spin inline-block w-4 h-4 border-2 border-[#1877f2] border-t-transparent rounded-full" />
+                Nipo-post…
+              </div>
             )}
 
             {postStatus === "posted" && (
               <p className="text-green-400 text-sm font-mono text-center py-2">
                 Na-post na sa Facebook Page!
+              </p>
+            )}
+
+            {postStatus === "scheduled" && (
+              <p className="text-green-400 text-sm font-mono text-center py-2">
+                Na-schedule na ang post sa{" "}
+                {new Date(scheduleTime).toLocaleString("fil-PH", {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })}
+                !
               </p>
             )}
 
