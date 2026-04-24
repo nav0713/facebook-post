@@ -68,6 +68,8 @@ export default function GraphicGenerator({
   const [postStatus, setPostStatus] = useState<PostStatus>("idle");
   const [postError, setPostError] = useState<string | null>(null);
   const [scheduleTime, setScheduleTime] = useState<string>("");
+  const [imageSource, setImageSource] = useState<"article" | "custom">("article");
+  const [customImageUrl, setCustomImageUrl] = useState<string>("");
 
   const generate = async () => {
     setStatus("generating");
@@ -78,7 +80,10 @@ export default function GraphicGenerator({
         document.fonts.load("500 38px 'JetBrains Mono'"),
       ]);
 
-      const assets = await loadGraphicAssets(imageUrl);
+      const activeImageUrl = imageSource === "custom" && customImageUrl.trim()
+        ? customImageUrl.trim()
+        : imageUrl;
+      const assets = await loadGraphicAssets(activeImageUrl);
       const canvas = document.createElement("canvas");
       canvas.width = GRAPHIC.size;
       canvas.height = GRAPHIC.size;
@@ -177,12 +182,51 @@ export default function GraphicGenerator({
       </span>
 
       {status === "idle" && (
-        <button
-          onClick={generate}
-          className="w-full py-3 rounded-xl bg-[#c9a84c] text-[#080806] font-bold text-sm tracking-wide hover:bg-[#e0be6a] transition-colors"
-        >
-          Gumawa ng Graphic
-        </button>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-[#5a5548]">
+              Image Source
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setImageSource("article")}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-colors ${
+                  imageSource === "article"
+                    ? "bg-[#c9a84c] text-[#080806]"
+                    : "border border-[#2e2b1e] text-[#7a7468] hover:text-[#c5c0b4]"
+                }`}
+              >
+                Article Image
+              </button>
+              <button
+                onClick={() => setImageSource("custom")}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-colors ${
+                  imageSource === "custom"
+                    ? "bg-[#c9a84c] text-[#080806]"
+                    : "border border-[#2e2b1e] text-[#7a7468] hover:text-[#c5c0b4]"
+                }`}
+              >
+                Custom URL
+              </button>
+            </div>
+            {imageSource === "custom" && (
+              <input
+                type="url"
+                placeholder="https://example.com/image.jpg"
+                value={customImageUrl}
+                onChange={(e) => setCustomImageUrl(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-[#1a1810] border border-[#2e2b1e] text-[#c5c0b4] text-xs font-mono placeholder-[#3a3830] focus:outline-none focus:border-[#c9a84c]"
+              />
+            )}
+          </div>
+          <button
+            onClick={generate}
+            disabled={imageSource === "custom" && !customImageUrl.trim()}
+            className="w-full py-3 rounded-xl bg-[#c9a84c] text-[#080806] font-bold text-sm tracking-wide hover:bg-[#e0be6a] disabled:opacity-40 transition-colors"
+          >
+            Gumawa ng Graphic
+          </button>
+        </div>
       )}
 
       {status === "generating" && (
@@ -225,6 +269,8 @@ export default function GraphicGenerator({
                 setDataUrl(null);
                 setPostStatus("idle");
                 setScheduleTime("");
+                setImageSource("article");
+                setCustomImageUrl("");
               }}
               className="px-4 py-3 rounded-xl border border-[#2e2b1e] text-[#7a7468] text-sm hover:text-[#c5c0b4] transition-colors"
             >
