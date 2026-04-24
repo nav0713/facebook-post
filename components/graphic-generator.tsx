@@ -23,20 +23,19 @@ const GRAPHIC = {
     saturate: 1.08,
   },
   overlay: {
-    topWashHeight: 340,
     lowerBandTop: 608,
     titleVeilTop: 620,
   },
   headline: {
-    top: 648,
+    top: 594,
     maxWords: 12,
-    minFontSize: 58,
-    maxFontSize: 86,
+    minFontSize: 90,
+    maxFontSize: 90,
   },
   detail: {
     gapTop: 18,
-    minFontSize: 32,
-    maxFontSize: 32,
+    minFontSize: 38,
+    maxFontSize: 38,
     maxLines: 4,
   },
 } as const;
@@ -75,7 +74,7 @@ export default function GraphicGenerator({
     try {
       await Promise.all([
         document.fonts.load("400 92px Anton"),
-        document.fonts.load("500 32px JetBrains Mono"),
+        document.fonts.load("500 38px 'JetBrains Mono'"),
       ]);
 
       const assets = await loadGraphicAssets(imageUrl);
@@ -326,9 +325,6 @@ function drawReferenceOverlays(ctx: CanvasRenderingContext2D) {
   ctx.fillStyle = "rgba(8, 11, 17, 0.1)";
   ctx.fillRect(0, 0, GRAPHIC.size, GRAPHIC.size);
 
-  ctx.fillStyle = "rgba(255,255,255,0.08)";
-  ctx.fillRect(0, 0, GRAPHIC.size, GRAPHIC.overlay.topWashHeight);
-
   const lowerBand = ctx.createLinearGradient(
     0,
     GRAPHIC.overlay.lowerBandTop,
@@ -418,53 +414,34 @@ function fitHeadlineBlock(
   ctx: CanvasRenderingContext2D,
   title: string | null,
 ): {
-  lines: [string, string];
+  lines: string[];
   fontSize: number;
   lineHeight: number;
   bottom: number;
 } {
-  const lines = buildHeadlineLines(title);
   const maxWidth = GRAPHIC.size - GRAPHIC.safeX * 2;
-  const maxHeight = 176;
-
-  for (
-    let fontSize = GRAPHIC.headline.maxFontSize;
-    fontSize >= GRAPHIC.headline.minFontSize;
-    fontSize -= 2
-  ) {
-    ctx.font = `400 ${fontSize}px Anton`;
-    const lineHeight = Math.round(fontSize * 1.05);
-    const fitsWidth = lines.every((line) => ctx.measureText(line).width <= maxWidth);
-    if (fitsWidth && lineHeight * 2 <= maxHeight) {
-      return {
-        lines,
-        fontSize,
-        lineHeight,
-        bottom: GRAPHIC.headline.top + lineHeight * 2,
-      };
-    }
-  }
-
-  const fontSize = GRAPHIC.headline.minFontSize;
+  const fontSize = GRAPHIC.headline.maxFontSize;
   ctx.font = `400 ${fontSize}px Anton`;
-  const finalLines: [string, string] = [
-    trimToWidth(ctx, lines[0], maxWidth),
-    trimToWidth(ctx, lines[1], maxWidth),
-  ];
-  const lineHeight = Math.round(fontSize * 1.08);
+  const lineHeight = Math.round(fontSize * 1.05);
+
+  const twoLines = buildHeadlineLines(title, 2);
+  const twoFit = twoLines.every((line) => ctx.measureText(line).width <= maxWidth);
+
+  const lines = twoFit ? twoLines : buildHeadlineLines(title, 3);
+  const finalLines = lines.map((line) => trimToWidth(ctx, line, maxWidth));
 
   return {
     lines: finalLines,
     fontSize,
     lineHeight,
-    bottom: GRAPHIC.headline.top + lineHeight * 2,
+    bottom: GRAPHIC.headline.top + lineHeight * finalLines.length,
   };
 }
 
 function drawHeadlineBlock(
   ctx: CanvasRenderingContext2D,
   layout: {
-    lines: [string, string];
+    lines: string[];
     fontSize: number;
     lineHeight: number;
   },
@@ -493,21 +470,52 @@ function drawHeadlineBlock(
   ctx.shadowOffsetY = 0;
 }
 
-function buildHeadlineLines(title: string | null): [string, string] {
+function buildHeadlineLines(title: string | null, lineCount: 2 | 3 = 2): string[] {
   const cleaned = cleanHeadline(title);
   const words = cleaned
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, GRAPHIC.headline.maxWords);
 
-  if (words.length === 0) return ["NEWS", "UPDATE"];
-  if (words.length === 1) return [words[0], "UPDATE"];
+  if (words.length === 0) return lineCount === 3 ? ["NEWS", "UPDATE", ""] : ["NEWS", "UPDATE"];
+  if (words.length === 1) return lineCount === 3 ? [words[0], "UPDATE", ""] : [words[0], "UPDATE"];
+
+  if (lineCount === 3 && words.length >= 3) {
+    const [s1, s2] = findBalancedThreeSplit(words);
+    return [
+      words.slice(0, s1).join(" "),
+      words.slice(s1, s2).join(" "),
+      words.slice(s2).join(" "),
+    ];
+  }
 
   const splitAt = findBalancedSplit(words);
   return [
     words.slice(0, splitAt).join(" "),
     words.slice(splitAt).join(" "),
   ];
+}
+
+function findBalancedThreeSplit(words: string[]): [number, number] {
+  const n = words.length;
+  let bestI = 1, bestJ = 2;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let i = 1; i < n - 1; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const l1 = words.slice(0, i).join(" ").length;
+      const l2 = words.slice(i, j).join(" ").length;
+      const l3 = words.slice(j).join(" ").length;
+      const score = Math.max(l1, l2, l3) - Math.min(l1, l2, l3);
+      if (score < bestScore) {
+        bestScore = score;
+        bestI = i;
+        bestJ = j;
+      }
+    }
+  }
+
+  return [bestI, bestJ];
 }
 
 function cleanHeadline(title: string | null): string {
@@ -566,7 +574,7 @@ function fitDetailBlock(
     fontSize >= GRAPHIC.detail.minFontSize;
     fontSize -= 1
   ) {
-    ctx.font = `500 ${fontSize}px JetBrains Mono`;
+    ctx.font = `500 ${fontSize}px 'JetBrains Mono'`;
     const lineHeight = Math.round(fontSize * 1.32);
 
     for (const candidate of candidates) {
@@ -584,7 +592,7 @@ function fitDetailBlock(
   if (!fallback) return null;
 
   const fontSize = GRAPHIC.detail.minFontSize;
-  ctx.font = `500 ${fontSize}px JetBrains Mono`;
+  ctx.font = `500 ${fontSize}px 'JetBrains Mono'`;
   return {
     lines: wrapText(ctx, fallback, maxWidth).slice(0, maxLines),
     fontSize,
@@ -603,7 +611,7 @@ function drawDetailBlock(
 ) {
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  ctx.font = `500 ${layout.fontSize}px JetBrains Mono`;
+  ctx.font = `500 ${layout.fontSize}px 'JetBrains Mono'`;
   ctx.fillStyle = "rgba(255,255,255,0.9)";
   ctx.shadowColor = "rgba(0,0,0,0.45)";
   ctx.shadowBlur = 12;
