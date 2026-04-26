@@ -5,6 +5,9 @@ import {
 } from "@google/generative-ai";
 import type { ArticleMetadata } from "@/types/extraction";
 import type { ExtractionResult } from "@/types/extraction";
+import type { ImageExtractionResult } from "@/types/extraction";
+import type { ImageTextElementRole } from "@/types/extraction";
+import type { ImageCaptionRevisionResult } from "@/types/extraction";
 import { truncateText, safeJsonParse } from "@/lib/utils";
 
 const MAX_ARTICLE_CHARS = 8_000;
@@ -181,6 +184,451 @@ export async function extractWithGemini(
   }
 
   return validateResult(parsed);
+}
+
+function validateImageExtractionResult(raw: unknown): ImageExtractionResult {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("Gemini returned an invalid image extraction response.");
+  }
+
+  const obj = raw as Record<string, unknown>;
+  const getString = (key: string): string | null => {
+    const value = obj[key];
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  };
+  const cropBox = validateCropBox(obj.cropBox);
+  const brandingBoxes = validateCropBoxes(obj.brandingBoxes);
+  const textBoxes = validateCropBoxes(obj.textBoxes);
+  const textElements = validateTextElements(obj.textElements);
+
+  return {
+    cropBox,
+    brandingBoxes,
+    textBoxes,
+    textElements,
+    extractedText: getString("extractedText"),
+    facebookCaption: cleanImageCaption(getString("facebookCaption")),
+    hashtags: getStringArrayFromRecord(obj, "hashtags"),
+    description: getString("description"),
+    recreationPrompt: getString("recreationPrompt"),
+  };
+}
+
+function cleanImageCaption(caption: string | null): string | null {
+  if (!caption) return null;
+
+  const cleaned = caption
+    .replace(
+      /^(makikita sa (mga )?larawan|sa (mga )?larawan|ayon sa (text|nakasulat|caption)( na)?( nasa| nakalagay sa)? (larawan|image)|nakasulat sa (mga )?larawan|base sa (image|larawan))[:,\s-]*/i,
+      "",
+    )
+    .trim();
+
+  return cleaned || caption;
+}
+
+function getStringArrayFromRecord(
+  obj: Record<string, unknown>,
+  key: string,
+): string[] {
+  const value = obj[key];
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter(
+      (item): item is string =>
+        typeof item === "string" && item.trim().length > 0,
+    )
+    .map((item) => item.trim());
+}
+
+function validateCropBoxes(value: unknown): ImageExtractionResult["brandingBoxes"] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map(validateCropBox)
+    .filter((box): box is NonNullable<ImageExtractionResult["cropBox"]> =>
+      Boolean(box),
+    );
+}
+
+function validateCropBox(value: unknown): ImageExtractionResult["cropBox"] {
+  if (!value || typeof value !== "object") return null;
+
+  const box = value as Record<string, unknown>;
+  const xMin = Number(box.xMin);
+  const yMin = Number(box.yMin);
+  const xMax = Number(box.xMax);
+  const yMax = Number(box.yMax);
+
+  if (![xMin, yMin, xMax, yMax].every(Number.isFinite)) return null;
+
+  const clamped = {
+    xMin: Math.max(0, Math.min(1000, xMin)),
+    yMin: Math.max(0, Math.min(1000, yMin)),
+    xMax: Math.max(0, Math.min(1000, xMax)),
+    yMax: Math.max(0, Math.min(1000, yMax)),
+  };
+
+  if (clamped.xMax <= clamped.xMin || clamped.yMax <= clamped.yMin) {
+    return null;
+  }
+
+  return clamped;
+}
+
+function validateTextElements(value: unknown): ImageExtractionResult["textElements"] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const obj = item as Record<string, unknown>;
+      const text = typeof obj.text === "string" ? obj.text.trim() : "";
+      const box = validateCropBox(obj.box);
+      const role = normalizeTextElementRole(obj.role);
+
+      if (!text || !box) return null;
+      return { text, role, box };
+    })
+    .filter((item): item is ImageExtractionResult["textElements"][number] =>
+      Boolean(item),
+    );
+}
+
+function normalizeTextElementRole(value: unknown): ImageTextElementRole {
+  const role = typeof value === "string" ? value : "";
+  if (
+    role === "date" ||
+    role === "headline" ||
+    role === "nameTag" ||
+    role === "caption" ||
+    role === "quote" ||
+    role === "other"
+  ) {
+    return role;
+  }
+
+  return "other";
+}
+
+export async function extractImageWithGemini({
+  base64,
+  mimeType,
+}: {
+  base64: string;
+  mimeType: string;
+}): Promise<ImageExtractionResult> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "GEMINI_API_KEY is not set. Please add it to your .env.local file.",
+    );
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-pro",
+    generationConfig: {
+      temperature: 0.1,
+      topP: 0.95,
+      maxOutputTokens: 4096,
+      responseMimeType: "application/json",
+    },
+    safetySettings: [
+      {
+        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+      },
+    ],
+  });
+
+  const prompt = `Analyze this image so another renderer can recreate it as a square 1080x1080 editorial social news image.
+
+Target recreation instruction:
+"Recreate the provided news-style image by strictly following the reference image's original composition, subject placement, scale, cropping, and visual hierarchy (do not impose or change layout), accurately preserving all people, poses, expressions, and background elements (including crowd or national symbols only if present), while removing all logos, watermarks, branding, usernames, and source labels; then apply a dramatic editorial news style (high contrast, deep cinematic shadows, slight desaturation with strong reds and natural skin tones preserved, subtle film grain, vignette, facial sharpening, optional depth blur, warm highlights and cool shadows), and conditionally recreate ONLY the text elements that exist in the original (such as date bar, headline, name tag, or captions) with clean modern bold sans-serif typography, proper hierarchy, and adaptive placement in available space without covering key subjects - do not add missing elements or force structure - output as a square 1080x1080 ultra-detailed, clean editorial social media image."
+
+Rules:
+- Return one "cropBox" bounding box that covers all visible people or primary subjects. Keep full visible body, hair, face, clothing, hands, accessories, and important symbols. If there are no people, use the primary news subject. If there is no clear subject, return null.
+- Identify all visible logos, watermarks, publication marks, usernames, social handles, URLs, source labels, platform labels, QR prompts, and brand/source marks in "brandingBoxes".
+- Identify every visible text block in "textBoxes", including text that should be recreated and text that should be removed.
+- Return "textElements" ONLY for non-branding text that exists in the original and should be recreated in the final image: date bars, headlines, name tags, captions, and quotes. Do not include usernames, publication labels, watermarks, URLs, or source marks.
+- For each text element, preserve the readable wording and line breaks as much as possible, classify the role as "date", "headline", "nameTag", "caption", "quote", or "other", and provide its original bounding box.
+- Separately extract all meaningful readable non-branding text in "extractedText", preserving useful wording and line breaks.
+- Exclude social handles, usernames, page names, URLs, QR prompts, platform labels, watermarks, logos, source marks, and branding from "extractedText".
+- Write a factual Facebook post article caption based ONLY on meaningful readable text and visible context.
+- The Facebook caption must be natural Taglish, informative, and must not invent names, dates, places, causes, claims, or details not visible in the image.
+- If the image does not provide enough factual context for a caption, keep the caption generic and say only what is visible.
+- Write directly as a news caption. Do not use meta phrases like "makikita sa larawan", "sa larawan", "ayon sa text", "nakasulat sa larawan", "base sa image", or similar wording.
+- Create 5 to 8 relevant hashtags based ONLY on visible text/context.
+- Use normalized coordinates from 0 to 1000.
+- If there is no visible branding, return an empty array for "brandingBoxes".
+- If there is no visible text overlay, return an empty array for "textBoxes" and "textElements".
+- If there is no meaningful non-branding text, return null for "extractedText".
+- Add a concise one-sentence visual description of the whole reference composition in "description".
+- Add a concise renderer-facing "recreationPrompt" that summarizes composition, subject placement, removals, text recreation, and editorial styling without adding facts.
+
+Return EXACTLY this JSON:
+{
+  "cropBox": { "xMin": 0, "yMin": 0, "xMax": 1000, "yMax": 1000 },
+  "brandingBoxes": [{ "xMin": 0, "yMin": 0, "xMax": 1000, "yMax": 1000 }],
+  "textBoxes": [{ "xMin": 0, "yMin": 0, "xMax": 1000, "yMax": 1000 }],
+  "textElements": [{ "text": "existing non-branding text", "role": "headline", "box": { "xMin": 0, "yMin": 0, "xMax": 1000, "yMax": 1000 } }],
+  "extractedText": "meaningful non-branding text from the image, preserving line breaks, or null",
+  "facebookCaption": "factual Taglish Facebook post caption based only on visible image text/context, or null",
+  "hashtags": ["#Tag1", "#Tag2"],
+  "description": "concise description of the full reference composition, or null",
+  "recreationPrompt": "concise prompt for faithful editorial image recreation, or null"
+}`;
+
+  const result = await model.generateContent([
+    prompt,
+    {
+      inlineData: {
+        data: base64,
+        mimeType,
+      },
+    },
+  ]);
+
+  const rawText = getGeminiResponseText(result.response);
+  if (!rawText) {
+    throw new Error("Gemini returned an empty image extraction response.");
+  }
+
+  const parsed = safeJsonParse<unknown>(rawText);
+  if (!parsed) {
+    console.error("[Gemini] Image extraction response failed to parse:", rawText);
+    throw new Error("Failed to parse Gemini image extraction response.");
+  }
+
+  return validateImageExtractionResult(parsed);
+}
+
+function validateImageCaptionRevisionResult(
+  raw: unknown,
+): ImageCaptionRevisionResult {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("Gemini returned an invalid caption revision response.");
+  }
+
+  const obj = raw as Record<string, unknown>;
+  const caption =
+    typeof obj.facebookCaption === "string" ? obj.facebookCaption.trim() : "";
+
+  if (!caption) {
+    throw new Error("Gemini returned an empty revised caption.");
+  }
+
+  return {
+    facebookCaption: cleanImageCaption(caption) ?? caption,
+    hashtags: getStringArrayFromRecord(obj, "hashtags"),
+  };
+}
+
+export async function reviseImageCaptionWithGemini({
+  userCaption,
+  extractedText,
+  suggestedCaption,
+  suggestedHashtags,
+}: {
+  userCaption: string;
+  extractedText: string;
+  suggestedCaption: string | null;
+  suggestedHashtags: string[];
+}): Promise<ImageCaptionRevisionResult> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "GEMINI_API_KEY is not set. Please add it to your .env.local file.",
+    );
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-pro",
+    generationConfig: {
+      temperature: 0.25,
+      topP: 0.95,
+      maxOutputTokens: 2048,
+      responseMimeType: "application/json",
+    },
+    safetySettings: [
+      {
+        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+      },
+    ],
+  });
+
+  const prompt = `Revise the user's Facebook post caption in natural Taglish.
+
+Rules:
+- Base the revised post ONLY on the user's caption and the extracted image text below.
+- Do not invent facts, names, dates, locations, quotes, causes, numbers, or outcomes.
+- Keep it readable for a Facebook news post: 2 to 4 short paragraphs.
+- Preserve the user's intended meaning, but improve grammar, flow, clarity, and factual tone.
+- Remove unsupported claims from the user's caption if they are not supported by the extracted image text.
+- Write directly as a news caption. Do not say "makikita sa larawan", "sa larawan", "ayon sa text", "nakasulat sa larawan", "base sa image", or similar meta phrasing.
+- Do not describe the post as an image or refer to the extracted text; just state the factual context.
+- Create 5 to 8 relevant hashtags. Reuse relevant suggested hashtags when appropriate. Each hashtag must start with #.
+
+Return EXACTLY this JSON:
+{
+  "facebookCaption": "2-4 short paragraphs in factual Taglish",
+  "hashtags": ["#Tag1", "#Tag2"]
+}
+
+User caption:
+${userCaption}
+
+Extracted image text:
+${extractedText}
+
+Suggested image-only caption:
+${suggestedCaption ?? "none"}
+
+Suggested hashtags:
+${suggestedHashtags.join(" ") || "none"}`;
+
+  let rawText: string | null = null;
+  try {
+    const result = await model.generateContent(prompt);
+    rawText = getGeminiResponseText(result.response);
+
+    if (!rawText) {
+      const response = result.response as unknown as {
+        promptFeedback?: unknown;
+        candidates?: Array<{ finishReason?: unknown; finishMessage?: unknown }>;
+      };
+      console.warn("[Gemini] Empty caption revision response:", {
+        promptFeedback: response.promptFeedback,
+        finishReason: response.candidates?.[0]?.finishReason,
+        finishMessage: response.candidates?.[0]?.finishMessage,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[Gemini] Caption revision failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  if (!rawText) {
+    return buildFallbackCaptionRevision({
+      userCaption,
+      extractedText,
+      suggestedCaption,
+      suggestedHashtags,
+    });
+  }
+
+  const parsed = safeJsonParse<unknown>(rawText);
+  if (!parsed) {
+    console.error("[Gemini] Caption revision response failed to parse:", rawText);
+    return buildFallbackCaptionRevision({
+      userCaption,
+      extractedText,
+      suggestedCaption,
+      suggestedHashtags,
+    });
+  }
+
+  try {
+    return validateImageCaptionRevisionResult(parsed);
+  } catch (err) {
+    console.warn(
+      "[Gemini] Invalid caption revision shape:",
+      err instanceof Error ? err.message : err,
+    );
+    return buildFallbackCaptionRevision({
+      userCaption,
+      extractedText,
+      suggestedCaption,
+      suggestedHashtags,
+    });
+  }
+}
+
+function buildFallbackCaptionRevision({
+  userCaption,
+  extractedText,
+  suggestedCaption,
+  suggestedHashtags,
+}: {
+  userCaption: string;
+  extractedText: string;
+  suggestedCaption: string | null;
+  suggestedHashtags: string[];
+}): ImageCaptionRevisionResult {
+  const caption =
+    cleanImageCaption(compactCaptionText(userCaption)) ??
+    cleanImageCaption(compactCaptionText(suggestedCaption ?? "")) ??
+    compactCaptionText(extractedText) ??
+    "Pinakabagong update tungkol sa isyung ito.";
+
+  return {
+    facebookCaption: caption,
+    hashtags: normalizeHashtags(suggestedHashtags, caption || extractedText),
+  };
+}
+
+function compactCaptionText(text: string): string | null {
+  const cleaned = text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+
+  return cleaned || null;
+}
+
+function normalizeHashtags(seedHashtags: string[], fallbackText: string): string[] {
+  const normalized = seedHashtags
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .map((tag) => (tag.startsWith("#") ? tag : `#${tag}`))
+    .map((tag) => tag.replace(/[^\w#À-ž]/g, ""))
+    .filter((tag) => tag.length > 1);
+
+  const unique = Array.from(new Set(normalized));
+  if (unique.length >= 5) return unique.slice(0, 8);
+
+  const derived = fallbackText
+    .replace(/#[\wÀ-ž-]+/g, " ")
+    .replace(/[^A-Za-z0-9À-ž\s-]/g, " ")
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 4)
+    .slice(0, 8)
+    .map((word) => `#${word.replace(/-/g, "")}`);
+
+  return Array.from(new Set([...unique, ...derived])).slice(0, 8);
 }
 
 export async function generateAlternateTitleWithGemini({

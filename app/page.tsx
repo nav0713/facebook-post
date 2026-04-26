@@ -5,6 +5,7 @@ import UrlForm from "@/components/url-form";
 import ResultsCard from "@/components/results-card";
 import TabSwitcher from "@/components/tab-switcher";
 import NewsAggregatorPanel from "@/components/news-aggregator-panel";
+import ImageExtractorPanel from "@/components/image-extractor-panel";
 import type { ExtractResponse, ExtractionResult, ArticleMetadata } from "@/types/extraction";
 
 type AppState =
@@ -14,7 +15,7 @@ type AppState =
   | { status: "success"; data: ExtractionResult; metadata: ArticleMetadata; url: string };
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"extractor" | "aggregator">("extractor");
+  const [activeTab, setActiveTab] = useState<"extractor" | "aggregator" | "image">("image");
   const [state, setState] = useState<AppState>({ status: "idle" });
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
 
@@ -60,7 +61,7 @@ export default function Home() {
         }}
       />
 
-      <div className="relative max-w-5xl mx-auto">
+      <div className="relative max-w-7xl mx-auto">
         {/* Header */}
         <header className="mb-8 space-y-3">
           <div className="flex items-center gap-3">
@@ -73,12 +74,12 @@ export default function Home() {
           </div>
 
           <h1 className="text-4xl sm:text-5xl font-black tracking-tighter leading-tight text-[#f0ede6]">
-            News <br />
-            <span className="text-[#c9a84c]">Suite</span>
+            News Post <br />
+            <span className="text-[#c9a84c]">Recreator</span>
           </h1>
 
           <p className="text-[#5a5548] text-base leading-relaxed max-w-sm">
-            Mag-extract at mag-i-share ng Taglish news sa Facebook. Magbrowse at pamahalaan ng RSS feeds.
+            Recreate clean no-branding news images and write factual Tagalog/Taglish Facebook captions.
           </p>
         </header>
 
@@ -141,6 +142,9 @@ export default function Home() {
             }}
           />
         )}
+
+        {/* Image Extractor Tab */}
+        {activeTab === "image" && <ImageExtractorPanel />}
       </div>
     </main>
   );
