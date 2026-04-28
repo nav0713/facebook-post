@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 interface ImageUploaderProps {
   file: File | null;
@@ -16,6 +16,36 @@ export default function ImageUploader({
   onChange,
 }: ImageUploaderProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const pasteZoneRef = useRef<HTMLDivElement | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    if (disabled) return;
+
+    const pastedFile = Array.from(event.clipboardData.items)
+      .find((item) => item.kind === "file" && item.type.startsWith("image/"))
+      ?.getAsFile();
+
+    if (!pastedFile) return;
+
+    event.preventDefault();
+    onChange(
+      new File([pastedFile], `pasted-news-image-${Date.now()}.png`, {
+        type: pastedFile.type || "image/png",
+      }),
+    );
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+    if (disabled) return;
+
+    const droppedFile = Array.from(event.dataTransfer.files).find((item) =>
+      item.type.startsWith("image/"),
+    );
+    if (droppedFile) onChange(droppedFile);
+  };
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -25,7 +55,7 @@ export default function ImageUploader({
             Input image
           </p>
           <h2 className="mt-1 text-lg font-black text-slate-950">
-            Upload news-style image
+            Paste news-style image
           </h2>
         </div>
         {file && (
@@ -43,9 +73,24 @@ export default function ImageUploader({
         )}
       </div>
 
-      <label
-        htmlFor="post-image-upload"
-        className="mt-4 flex min-h-[260px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-4 text-center transition hover:border-red-300 hover:bg-red-50/40"
+      <div
+        ref={pasteZoneRef}
+        tabIndex={disabled ? -1 : 0}
+        role="button"
+        aria-label="Paste an image from your clipboard"
+        onPaste={handlePaste}
+        onClick={() => pasteZoneRef.current?.focus()}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (!disabled) setIsDragging(true);
+        }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={handleDrop}
+        className={`mt-4 flex min-h-[260px] cursor-text flex-col items-center justify-center rounded-xl border-2 border-dashed p-4 text-center outline-none transition focus:ring-4 focus:ring-red-100 ${
+          isDragging
+            ? "border-red-400 bg-red-50"
+            : "border-slate-300 bg-slate-50 hover:border-red-300 hover:bg-red-50/40"
+        } ${disabled ? "opacity-60" : ""}`}
       >
         <input
           ref={inputRef}
@@ -71,19 +116,30 @@ export default function ImageUploader({
           </div>
         ) : (
           <div className="max-w-xs space-y-2">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-600 text-xl font-black text-white">
-              +
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-600 text-sm font-black text-white">
+              ⌘V
             </div>
             <p className="text-sm font-bold text-slate-900">
-              Drop or choose an image
+              Paste image here
             </p>
             <p className="text-xs leading-relaxed text-slate-500">
-              JPG, PNG, or WEBP up to 12MB. Branding will be removed by the AI
-              image edit step.
+              Copy an image, click this box, then press Cmd+V or Ctrl+V.
+              Drag/drop also works.
             </p>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                inputRef.current?.click();
+              }}
+              disabled={disabled}
+              className="mt-3 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 transition hover:border-red-200 hover:text-red-700 disabled:opacity-50"
+            >
+              Choose file instead
+            </button>
           </div>
         )}
-      </label>
+      </div>
     </section>
   );
 }
