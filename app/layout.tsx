@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Taglish News Extractor",
+  title: "News Post Recreator",
   description:
-    "I-paste ang link ng balita — i-e-extract ng AI ang mahahalagang detalye at isusulat ang headline sa natural na Taglish.",
+    "Upload a news-style image and article to regenerate a clean editorial post with a Tagalog/Taglish Facebook caption.",
 };
 
 export default function RootLayout({

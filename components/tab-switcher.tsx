@@ -1,8 +1,8 @@
 "use client";
 
 interface TabSwitcherProps {
-  activeTab: "extractor" | "aggregator";
-  onTabChange: (tab: "extractor" | "aggregator") => void;
+  activeTab: "extractor" | "aggregator" | "image";
+  onTabChange: (tab: "extractor" | "aggregator" | "image") => void;
 }
 
 export default function TabSwitcher({ activeTab, onTabChange }: TabSwitcherProps) {
@@ -27,6 +27,16 @@ export default function TabSwitcher({ activeTab, onTabChange }: TabSwitcherProps
         }`}
       >
         News Aggregator
+      </button>
+      <button
+        onClick={() => onTabChange("image")}
+        className={`px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
+          activeTab === "image"
+            ? "border-[#c9a84c] text-[#c9a84c]"
+            : "border-transparent text-[#5a5548] hover:text-[#c5c0b4]"
+        }`}
+      >
+        Post Recreator
       </button>
     </div>
   );
