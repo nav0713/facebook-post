@@ -124,7 +124,7 @@ export default function ImageUploader({
             </p>
             <p className="text-xs leading-relaxed text-slate-500">
               Copy an image, click this box, then press Cmd+V or Ctrl+V.
-              Drag/drop also works.
+              Drag/drop also works. Branding will be removed by the AI image edit step.
             </p>
             <button
               type="button"
